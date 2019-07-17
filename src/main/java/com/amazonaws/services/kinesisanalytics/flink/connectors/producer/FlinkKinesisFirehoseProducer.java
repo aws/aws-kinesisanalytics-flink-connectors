@@ -181,8 +181,6 @@ public class FlinkKinesisFirehoseProducer<OUT> extends RichSinkFunction<OUT> {
 
         propagateAsyncExceptions();
 
-        LOGGER.info("Kinesis Firehose delivery stream: {}", defaultDeliveryStream);
-
         ListenableFuture<UserRecordResult> future = firehoseProducer.addUserRecord(new Record().withData(serializedValue));
         Futures.addCallback(future, monitorCallback);
     }
