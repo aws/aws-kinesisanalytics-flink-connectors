@@ -166,12 +166,6 @@
                                     <exclude>log4j:*</exclude>
                                 </excludes>
                             </artifactSet>
-                            <relocations>
-                                <relocation>
-                                    <pattern>com.amazonaws</pattern>
-                                    <shadedPattern>com.amazonaws.services.kinesisanalytics.kinesisanalytics-flink-connectors.shaded.com.amazonaws</shadedPattern>
-                                </relocation>
-                            </relocations>
                             <filters>
                                 <filter>
                                     <!-- Do not copy the signatures in the META-INF folder.
