@@ -1,21 +1,3 @@
-/*
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package com.amazonaws.services.kinesisanalytics.flink.connectors.producer;
 
 import com.amazonaws.services.kinesisanalytics.flink.connectors.exception.FlinkKinesisFirehoseException;
@@ -26,6 +8,7 @@ import com.amazonaws.services.kinesisfirehose.model.Record;
 import com.google.common.util.concurrent.SettableFuture;
 import org.apache.flink.api.common.serialization.SerializationSchema;
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.runtime.state.FunctionSnapshotContext;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.slf4j.Logger;
@@ -46,6 +29,8 @@ import static com.amazonaws.services.kinesisanalytics.flink.connectors.testutils
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.testutils.TestUtils.getStandardProperties;
 import static org.apache.flink.streaming.api.functions.sink.SinkFunction.Context;
 import static org.mockito.Matchers.any;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
@@ -74,7 +59,7 @@ public class FlinkKinesisFirehoseProducerTest {
         MockitoAnnotations.initMocks(this);
 
         flinkKinesisFirehoseProducer = spy(new FlinkKinesisFirehoseProducer<>(DEFAULT_DELIVERY_STREAM,
-            getKinesisFirehoseSerializationSchema(), getStandardProperties(), kinesisFirehoseClient, firehoseProducer));
+                getKinesisFirehoseSerializationSchema(), getStandardProperties(), kinesisFirehoseClient, firehoseProducer));
         context = getContext();
     }
 
@@ -82,16 +67,16 @@ public class FlinkKinesisFirehoseProducerTest {
     public Object[][] kinesisFirehoseSerializationProvider() {
 
         return new Object[][]{
-            {DEFAULT_DELIVERY_STREAM, getKinesisFirehoseSerializationSchema(), getStandardProperties(), null},
-            {DEFAULT_DELIVERY_STREAM, getKinesisFirehoseSerializationSchema(), getStandardProperties(), CredentialProviderType.BASIC},
+                {DEFAULT_DELIVERY_STREAM, getKinesisFirehoseSerializationSchema(), getStandardProperties(), null},
+                {DEFAULT_DELIVERY_STREAM, getKinesisFirehoseSerializationSchema(), getStandardProperties(), CredentialProviderType.BASIC},
         };
     }
 
     @DataProvider(name = "serializationSchemaProvider")
     public Object[][] serializationSchemaProvider() {
         return new Object[][] {
-            {DEFAULT_DELIVERY_STREAM, getSerializationSchema(), getStandardProperties(), null},
-            {DEFAULT_DELIVERY_STREAM, getSerializationSchema(), getStandardProperties(), CredentialProviderType.BASIC}
+                {DEFAULT_DELIVERY_STREAM, getSerializationSchema(), getStandardProperties(), null},
+                {DEFAULT_DELIVERY_STREAM, getSerializationSchema(), getStandardProperties(), CredentialProviderType.BASIC}
         };
     }
 
@@ -101,8 +86,8 @@ public class FlinkKinesisFirehoseProducerTest {
                                                           final Properties configProps,
                                                           final CredentialProviderType credentialType) {
         FlinkKinesisFirehoseProducer<String> firehoseProducer = (credentialType != null) ?
-            new FlinkKinesisFirehoseProducer<String>(deliveryStream, schema, configProps, credentialType) :
-            new FlinkKinesisFirehoseProducer<String>(deliveryStream, schema, configProps);
+                new FlinkKinesisFirehoseProducer<String>(deliveryStream, schema, configProps, credentialType) :
+                new FlinkKinesisFirehoseProducer<String>(deliveryStream, schema, configProps);
         assertNotNull(firehoseProducer);
     }
 
@@ -110,10 +95,10 @@ public class FlinkKinesisFirehoseProducerTest {
     public void testFlinkKinesisFirehoseProducerWithSerializationSchemaHappyCase(final String deliveryStream ,
                                                                                  final SerializationSchema schema,
                                                                                  final Properties configProps,
-                                                           CredentialProviderType credentialType) {
+                                                                                 CredentialProviderType credentialType) {
         FlinkKinesisFirehoseProducer<String> firehoseProducer = (credentialType != null) ?
-            new FlinkKinesisFirehoseProducer<String>(deliveryStream, schema, configProps, credentialType) :
-            new FlinkKinesisFirehoseProducer<String>(deliveryStream, schema, configProps);
+                new FlinkKinesisFirehoseProducer<String>(deliveryStream, schema, configProps, credentialType) :
+                new FlinkKinesisFirehoseProducer<String>(deliveryStream, schema, configProps);
         assertNotNull(firehoseProducer);
     }
 
@@ -126,7 +111,7 @@ public class FlinkKinesisFirehoseProducerTest {
         try {
             flinkKinesisFirehoseProducer.setFailOnError(true);
             when(firehoseProducer.addUserRecord(any(Record.class)))
-                .thenReturn(getUserRecordResult(true, false));
+                    .thenReturn(getUserRecordResult(true, false));
 
             flinkKinesisFirehoseProducer.open(properties);
             flinkKinesisFirehoseProducer.invoke("Test", context);
@@ -154,8 +139,8 @@ public class FlinkKinesisFirehoseProducerTest {
         try {
             flinkKinesisFirehoseProducer.setFailOnError(true);
             when(firehoseProducer.addUserRecord(any(Record.class)))
-                .thenReturn(getUserRecordResult(true, false))
-                .thenReturn(getUserRecordResult(false, true));
+                    .thenReturn(getUserRecordResult(true, false))
+                    .thenReturn(getUserRecordResult(false, true));
 
             flinkKinesisFirehoseProducer.open(properties);
             flinkKinesisFirehoseProducer.invoke("Test", context);
@@ -185,8 +170,8 @@ public class FlinkKinesisFirehoseProducerTest {
         flinkKinesisFirehoseProducer.setFailOnError(false);
 
         when(firehoseProducer.addUserRecord(any(Record.class)))
-            .thenReturn(getUserRecordResult(true, false))
-            .thenReturn(getUserRecordResult(true, true));
+                .thenReturn(getUserRecordResult(true, false))
+                .thenReturn(getUserRecordResult(true, true));
 
         flinkKinesisFirehoseProducer.open(properties);
         flinkKinesisFirehoseProducer.invoke("Test", context);
@@ -202,7 +187,7 @@ public class FlinkKinesisFirehoseProducerTest {
     public void testFlinkKinesisFirehoseProducerHappyWorkflow() throws Exception {
 
         when(firehoseProducer.addUserRecord(any(Record.class)))
-            .thenReturn(getUserRecordResult(false, true));
+                .thenReturn(getUserRecordResult(false, true));
 
         flinkKinesisFirehoseProducer.open(properties);
         flinkKinesisFirehoseProducer.invoke("Test", context);
@@ -211,6 +196,63 @@ public class FlinkKinesisFirehoseProducerTest {
         verify(flinkKinesisFirehoseProducer, times(1)).open(properties);
         verify(flinkKinesisFirehoseProducer, times(1)).invoke("Test", context);
         verify(flinkKinesisFirehoseProducer, times(1)).close();
+    }
+
+    @Test
+    public void testFlinkKinesisFirehoseProducerCloseAndFlushHappyWorkflow() throws Exception {
+
+        when(firehoseProducer.addUserRecord(any(Record.class)))
+                .thenReturn(getUserRecordResult(false, true));
+
+        doNothing().when(firehoseProducer).flush();
+
+        when(firehoseProducer.getOutstandingRecordsCount()).thenReturn(1).thenReturn(0);
+        when(firehoseProducer.isFlushFailed()).thenReturn(false);
+
+        flinkKinesisFirehoseProducer.open(properties);
+        flinkKinesisFirehoseProducer.invoke("Test", context);
+        flinkKinesisFirehoseProducer.close();
+
+        verify(firehoseProducer, times(1)).flush();
+    }
+
+    @Test
+    public void testFlinkKinesisFirehoseProducerTakeSnapshotHappyWorkflow() throws Exception {
+
+        when(firehoseProducer.addUserRecord(any(Record.class)))
+                .thenReturn(getUserRecordResult(false, true));
+
+        doNothing().when(firehoseProducer).flush();
+
+        when(firehoseProducer.getOutstandingRecordsCount()).thenReturn(1).thenReturn(1).thenReturn(1).thenReturn(0);
+        when(firehoseProducer.isFlushFailed()).thenReturn(false);
+
+        FunctionSnapshotContext functionContext = mock(FunctionSnapshotContext.class);
+        flinkKinesisFirehoseProducer.open(properties);
+        flinkKinesisFirehoseProducer.invoke("Test", context);
+        flinkKinesisFirehoseProducer.snapshotState(functionContext);
+
+        verify(firehoseProducer, times(1)).flush();
+    }
+
+    @Test(expectedExceptions = IllegalStateException.class,
+            expectedExceptionsMessageRegExp = "An error has occurred trying to flush the buffer synchronously.*")
+    public void testFlinkKinesisFirehoseProducerTakeSnapshotFailedFlush() throws Exception {
+
+        when(firehoseProducer.addUserRecord(any(Record.class)))
+                .thenReturn(getUserRecordResult(false, true));
+
+        doNothing().when(firehoseProducer).flush();
+
+        when(firehoseProducer.getOutstandingRecordsCount()).thenReturn(1).thenReturn(1);
+        when(firehoseProducer.isFlushFailed()).thenReturn(false).thenReturn(true);
+
+        FunctionSnapshotContext functionContext = mock(FunctionSnapshotContext.class);
+        flinkKinesisFirehoseProducer.open(properties);
+        flinkKinesisFirehoseProducer.invoke("Test", context);
+        flinkKinesisFirehoseProducer.snapshotState(functionContext);
+
+        fail("We should not reach here.");
     }
 
     /**
@@ -224,8 +266,8 @@ public class FlinkKinesisFirehoseProducerTest {
         flinkKinesisFirehoseProducer.setFailOnError(false);
 
         when(firehoseProducer.addUserRecord(any(Record.class)))
-            .thenReturn(getUserRecordResult(true, false))
-            .thenReturn(getUserRecordResult(true, false));
+                .thenReturn(getUserRecordResult(true, false))
+                .thenReturn(getUserRecordResult(true, false));
 
         flinkKinesisFirehoseProducer.open(properties);
         flinkKinesisFirehoseProducer.invoke("Test", context);

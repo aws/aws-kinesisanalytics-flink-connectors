@@ -1,21 +1,3 @@
-/*
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package com.amazonaws.services.kinesisanalytics.flink.connectors.producer.impl;
 
 import com.amazonaws.services.kinesisanalytics.flink.connectors.exception.FlinkKinesisFirehoseException;
@@ -25,6 +7,7 @@ import com.amazonaws.services.kinesisanalytics.flink.connectors.producer.IProduc
 import com.amazonaws.services.kinesisfirehose.AmazonKinesisFirehose;
 import com.amazonaws.services.kinesisfirehose.model.AmazonKinesisFirehoseException;
 import com.amazonaws.services.kinesisfirehose.model.PutRecordBatchRequest;
+import com.amazonaws.services.kinesisfirehose.model.PutRecordBatchResponseEntry;
 import com.amazonaws.services.kinesisfirehose.model.PutRecordBatchResult;
 import com.amazonaws.services.kinesisfirehose.model.Record;
 import com.amazonaws.services.kinesisfirehose.model.ServiceUnavailableException;
@@ -123,6 +106,13 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
     /** Reports if the Firehose Producer was destroyed, shutting down the flusher thread. */
     private volatile boolean isDestroyed;
 
+    /** A sentinel flag to notify the flusher thread to flush the buffer immediately.
+     * This flag should be used only to request a flush from the caller thread through the {@link #flush()} method. */
+    private volatile boolean syncFlush;
+
+    /** A flag representing if the Flusher thread has failed. */
+    private volatile boolean isFlusherFailed;
+
     public FirehoseProducer(final String deliveryStream, final AmazonKinesisFirehose firehoseClient,
                             final Properties configProps) {
 
@@ -131,46 +121,46 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
         Validate.notNull(configProps, "Firehose producer configuration properties cannot be null");
 
         this.maxBufferSize = Integer.valueOf(configProps.getProperty(FIREHOSE_PRODUCER_BUFFER_MAX_SIZE,
-            String.valueOf(DEFAULT_MAX_BUFFER_SIZE)));
+                String.valueOf(DEFAULT_MAX_BUFFER_SIZE)));
 
         Validate.isTrue(maxBufferSize <= 0 || maxBufferSize <= DEFAULT_MAX_BUFFER_SIZE,
-            String.format("Buffer size cannot be <= 0 or > %s", DEFAULT_MAX_BUFFER_SIZE));
+                String.format("Buffer size cannot be <= 0 or > %s", DEFAULT_MAX_BUFFER_SIZE));
 
         this.bufferTimeoutInMillis = Long.valueOf(configProps.getProperty(FIREHOSE_PRODUCER_BUFFER_MAX_TIMEOUT,
-            String.valueOf(DEFAULT_MAX_BUFFER_TIMEOUT)));
+                String.valueOf(DEFAULT_MAX_BUFFER_TIMEOUT)));
         Validate.isTrue(bufferTimeoutInMillis >= 0, "Flush timeout should be > 0.");
 
         this.numberOfRetries = Integer.valueOf(configProps.getProperty(FIREHOSE_PRODUCER_BUFFER_FLUSH_MAX_NUMBER_OF_RETRIES,
-            String.valueOf(DEFAULT_NUMBER_OF_RETRIES)));
+                String.valueOf(DEFAULT_NUMBER_OF_RETRIES)));
         Validate.isTrue(numberOfRetries >= 0, "Number of retries cannot be negative.");
 
         this.bufferFullWaitTimeoutInMillis = Long.valueOf(configProps.getProperty(FIREHOSE_PRODUCER_BUFFER_FULL_WAIT_TIMEOUT,
-            String.valueOf(DEFAULT_WAIT_TIME_FOR_BUFFER_FULL)));
+                String.valueOf(DEFAULT_WAIT_TIME_FOR_BUFFER_FULL)));
         Validate.isTrue(bufferFullWaitTimeoutInMillis >= 0, "Buffer full waiting timeout should be > 0.");
 
         this.bufferTimeoutBetweenFlushes = Long.valueOf(configProps.getProperty(FIREHOSE_PRODUCER_BUFFER_FLUSH_TIMEOUT,
-            String.valueOf(DEFAULT_INTERVAL_BETWEEN_FLUSHES)));
+                String.valueOf(DEFAULT_INTERVAL_BETWEEN_FLUSHES)));
         Validate.isTrue(bufferTimeoutBetweenFlushes >= 0, "Interval between flushes cannot be negative.");
 
         this.maxBackOffInMillis = Long.valueOf(configProps.getProperty(FIREHOSE_PRODUCER_BUFFER_MAX_BACKOFF_TIMEOUT,
-            String.valueOf(DEFAULT_MAX_BACKOFF)));
+                String.valueOf(DEFAULT_MAX_BACKOFF)));
         Validate.isTrue(maxBackOffInMillis >= 0, "Max backoff timeout should be > 0.");
 
         this.baseBackOffInMillis = Long.valueOf(configProps.getProperty(FIREHOSE_PRODUCER_BUFFER_BASE_BACKOFF_TIMEOUT,
-            String.valueOf(DEFAULT_BASE_BACKOFF)));
+                String.valueOf(DEFAULT_BASE_BACKOFF)));
         Validate.isTrue(baseBackOffInMillis >= 0, "Base backoff timeout should be > 0.");
 
         this.maxOperationTimeoutInMillis = Long.valueOf(configProps.getProperty(FIREHOSE_PRODUCER_MAX_OPERATION_TIMEOUT,
-            String.valueOf(DEFAULT_MAX_OPERATION_TIMEOUT)));
+                String.valueOf(DEFAULT_MAX_OPERATION_TIMEOUT)));
         Validate.isTrue(maxOperationTimeoutInMillis >= 0, "Max operation timeout should be > 0.");
 
         this.producerBuffer = new ArrayDeque<>(maxBufferSize);
         this.flusherBuffer = new ArrayDeque<>(maxBufferSize);
 
         flusher = Executors.newSingleThreadExecutor(new ThreadFactoryBuilder()
-            .setDaemon(false)
-            .setNameFormat("kda-writer-thread-%d")
-            .build());
+                .setDaemon(false)
+                .setNameFormat("kda-writer-thread-%d")
+                .build());
         flusher.submit(() -> flushBuffer());
     }
 
@@ -194,7 +184,7 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
      */
     @Override
     public ListenableFuture<O> addUserRecord(final R record, final long timeoutInMillis)
-        throws TimeoutExpiredException, InterruptedException {
+            throws TimeoutExpiredException, InterruptedException {
 
         Validate.notNull(record, "Record cannot be null.");
         Validate.isTrue(timeoutInMillis > 0, "Operation timeout should be > 0.");
@@ -238,7 +228,7 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
      * This method runs in a background thread responsible for flushing the Producer Buffer in case the buffer is full,
      * not enough records into the buffer and timeout has expired or flusher timeout has expired.
      * If an unhandled exception is thrown the flusher thread should fail, logging the failure.
-     * However, this behavior will block the producer to move on until hit the given timeout and throw {@code TimeoutExpiredException}
+     * However, this behavior will block the producer to move on until hit the given timeout and throw {@code {@link TimeoutExpiredException}}
      */
     private void flushBuffer() {
 
@@ -257,7 +247,8 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
 
                 if (isDestroyed) {
                     return;
-                } else if (producerBuffer.size() >= maxBufferSize || (timeoutFlush && producerBuffer.size() > 0)) {
+                } else if (syncFlush || (producerBuffer.size() >= maxBufferSize ||
+                        (timeoutFlush && producerBuffer.size() > 0))) {
 
                     Queue<Record> tmpBuffer = flusherBuffer;
                     flusherBuffer = producerBuffer;
@@ -285,13 +276,18 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
                      * the items, and we would like to avoid such iteration just swapping references. */
                     Validate.validState(!flusherBuffer.isEmpty());
                     flusherBuffer = emptyFlushBuffer;
+
+                    if (syncFlush) {
+                        syncFlush = false;
+                        producerBufferLock.notify();
+                    }
                 }
 
             } catch (Exception ex) {
                 String errorMsg = "An error has occurred while trying to send data to Kinesis Firehose.";
 
                 if (ex instanceof AmazonKinesisFirehoseException &&
-                    ((AmazonKinesisFirehoseException) ex).getStatusCode() == 413) {
+                        ((AmazonKinesisFirehoseException) ex).getStatusCode() == 413) {
 
                     LOGGER.error(errorMsg +
                             "Batch of records too large. Please try to reduce your batch size by passing " +
@@ -300,13 +296,21 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
                 } else {
                     LOGGER.error(errorMsg, ex);
                 }
+
+                synchronized (producerBufferLock) {
+                    isFlusherFailed = true;
+                }
+
+                throw ex;
             }
         }
     }
 
-    private void submitBatchWithRetry(final Queue<Record> records) throws AmazonKinesisFirehoseException {
+    private void submitBatchWithRetry(final Queue<Record> records) throws AmazonKinesisFirehoseException,
+            RecordCouldNotBeSentException {
 
         PutRecordBatchResult lastResult;
+        String warnMessage = null;
         for (int attempts = 0; attempts < numberOfRetries; attempts++) {
             try {
                 LOGGER.debug("Trying to flush Buffer of size: {} on attempt: {}", records.size(), attempts);
@@ -317,26 +321,40 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
 
                     lastSucceededFlushTimestamp = System.nanoTime();
                     LOGGER.debug("Firehose Buffer has been flushed with size: {} on attempt: {}",
-                        records.size(), attempts);
+                            records.size(), attempts);
                     return;
                 }
+
+                PutRecordBatchResponseEntry failedRecord = lastResult.getRequestResponses()
+                        .stream()
+                        .filter(r -> r.getRecordId() == null)
+                        .findFirst()
+                        .orElse(null);
+
+                warnMessage = String.format("Number of failed records: %s.", lastResult.getFailedPutCount());
+                if (failedRecord != null) {
+                    warnMessage = String.format("Last Kinesis Firehose putRecordBath encountered an error and failed " +
+                                    "trying to put: %s records with error: %s - %s.",
+                            lastResult.getFailedPutCount(), failedRecord.getErrorCode(), failedRecord.getErrorMessage());
+                }
+                LOGGER.warn(warnMessage);
+
+                //Full Jitter: https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/
+                long timeToSleep = RandomUtils.nextLong(0,
+                        Math.min(maxBackOffInMillis, (baseBackOffInMillis * 2 * attempts)));
+                LOGGER.info("Sleeping for: {}ms on attempt: {}", timeToSleep, attempts);
+                Thread.sleep(timeToSleep);
+
             } catch (ServiceUnavailableException ex) {
                 LOGGER.info("Kinesis Firehose has thrown a recoverable exception.", ex);
-            }
-
-            //Full Jitter: https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/
-            long timeToSleep = RandomUtils.nextLong(0,
-                Math.min(maxBackOffInMillis, (baseBackOffInMillis * 2 * attempts)));
-            LOGGER.info("Sleeping for: {}ms on attempt: {}", timeToSleep, attempts);
-
-            try {
-                Thread.sleep(timeToSleep);
             } catch (InterruptedException e) {
                 LOGGER.info("An interrupted exception has been thrown between retry attempts.", e);
+            } catch (AmazonKinesisFirehoseException ex) {
+                throw ex;
             }
         }
 
-        throw new RecordCouldNotBeSentException("Exceeded number of attempts!");
+        throw new RecordCouldNotBeSentException("Exceeded number of attempts! " + warnMessage);
     }
 
     /**
@@ -347,13 +365,13 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
     private PutRecordBatchResult submitBatch(final Queue<Record> records) throws AmazonKinesisFirehoseException {
 
         LOGGER.debug("Sending {} records to Kinesis Firehose on stream: {}", records.size(),
-            deliveryStream);
+                deliveryStream);
 
         PutRecordBatchResult result;
         try {
             result = firehoseClient.putRecordBatch(new PutRecordBatchRequest()
-                .withDeliveryStreamName(deliveryStream)
-                .withRecords(records));
+                    .withDeliveryStreamName(deliveryStream)
+                    .withRecords(records));
         } catch (AmazonKinesisFirehoseException e) {
             throw e;
         }
@@ -398,7 +416,58 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
     @Override
     public int getOutstandingRecordsCount() {
         synchronized (producerBufferLock) {
-            return producerBuffer.size();
+            return producerBuffer.size() + flusherBuffer.size();
+        }
+    }
+
+    @Override
+    public boolean isFlushFailed() {
+        synchronized (producerBufferLock) {
+            return isFlusherFailed;
+        }
+    }
+
+    /**
+     * This method instructs the flusher thread to perform a flush on the buffer without waiting for completion.
+     * <p>
+     *     This implementation does not guarantee the whole buffer is flushed or if the flusher thread
+     *     has completed the flush or not.
+     *     In order to flush all records and wait until completion, use {@code {@link #flushSync()}}
+     * </p>
+     */
+    @Override
+    public void flush() {
+        synchronized (producerBufferLock) {
+            syncFlush = true;
+            producerBufferLock.notify();
+        }
+
+    }
+
+    /**
+     * This method instructs the flusher thread to perform the flush on the buffer and wait for the completion.
+     * <p>
+     *     This implementation is useful once there is a need to guarantee the buffer is flushed before making further progress.
+     *     i.e. Shutting down the producer.
+     *     i.e. Taking synchronous snapshots.
+     * </p>
+     * The caller needs to make sure to assert the status of {@link #isFlushFailed()} in order guarantee whether
+     * the flush has successfully completed or not.
+     */
+    @Override
+    public void flushSync() {
+        while (getOutstandingRecordsCount() > 0 && !isFlushFailed()) {
+            flush();
+            try {
+                Thread.sleep(500);
+            } catch (InterruptedException e) {
+                LOGGER.warn("An interruption has happened while trying to flush the buffer synchronously.");
+                Thread.currentThread().interrupt();
+            }
+        }
+
+        if (isFlushFailed()) {
+            LOGGER.warn("The flusher thread has failed trying to synchronously flush the buffer.");
         }
     }
 

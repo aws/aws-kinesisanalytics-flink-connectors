@@ -1,21 +1,3 @@
-/*
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package com.amazonaws.services.kinesisanalytics.flink.connectors.producer.impl;
 
 import com.amazonaws.services.kinesisfirehose.AmazonKinesisFirehose;
@@ -24,7 +6,9 @@ import com.amazonaws.services.kinesisfirehose.model.PutRecordBatchResponseEntry;
 import com.amazonaws.services.kinesisfirehose.model.PutRecordBatchResult;
 import com.amazonaws.services.kinesisfirehose.model.Record;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.SettableFuture;
 import org.apache.commons.lang3.RandomStringUtils;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.slf4j.Logger;
@@ -39,14 +23,20 @@ import java.util.Properties;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
-import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.ProducerConfigConstants.FIREHOSE_PRODUCER_BUFFER_MAX_TIMEOUT;
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.ProducerConfigConstants.DEFAULT_MAX_BUFFER_SIZE;
+import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.ProducerConfigConstants.FIREHOSE_PRODUCER_BUFFER_MAX_TIMEOUT;
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.producer.impl.FirehoseProducer.UserRecordResult;
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.testutils.TestUtils.DEFAULT_DELIVERY_STREAM;
 import static org.mockito.Matchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertTrue;
+import static org.testng.Assert.fail;
 
 /**
  * All tests make relies on best effort to simulate and wait how a multi-threading system should be behave,
@@ -69,7 +59,7 @@ public class FirehoseProducerTest {
         config.setProperty(FIREHOSE_PRODUCER_BUFFER_MAX_TIMEOUT, "1000");
 
         this.firehoseProducer = new FirehoseProducer<>(DEFAULT_DELIVERY_STREAM, firehoseClient,
-            config);
+                config);
     }
 
     @Test
@@ -101,6 +91,79 @@ public class FirehoseProducerTest {
         Thread.currentThread().join(3000);
         LOGGER.debug("Number of outstanding items: {}", firehoseProducer.getOutstandingRecordsCount());
         assertTrue(firehoseProducer.getOutstandingRecordsCount() == 0);
+    }
+
+    @Test
+    public void testFirehoseProducerMultiThreadFlushSyncHappyCase() throws Exception {
+        PutRecordBatchResult successResult = mock(PutRecordBatchResult.class);
+        ArgumentCaptor<PutRecordBatchRequest> captor = ArgumentCaptor.forClass(PutRecordBatchRequest.class);
+
+        when(firehoseClient.putRecordBatch(any(PutRecordBatchRequest.class))).thenReturn(successResult);
+
+        ExecutorService exec = Executors.newFixedThreadPool(4);
+        List<Callable<ListenableFuture<UserRecordResult>>> futures = new ArrayList<>();
+
+        for (int j = 0; j < 400; ++j) {
+            futures.add(() -> addRecord(firehoseProducer));
+        }
+
+        List<Future<ListenableFuture<UserRecordResult>>> results = exec.invokeAll(futures);
+
+        for (Future f : results) {
+            while(!f.isDone()) {
+                Thread.sleep(100);
+            }
+            SettableFuture fi = (SettableFuture) f.get();
+            UserRecordResult r = (UserRecordResult) fi.get();
+            assertTrue(r.isSuccessful());
+        }
+        firehoseProducer.flushSync();
+
+        LOGGER.debug("Number of outstanding items: {}", firehoseProducer.getOutstandingRecordsCount());
+        verify(firehoseClient).putRecordBatch(captor.capture());
+        assertEquals(firehoseProducer.getOutstandingRecordsCount() , 0);
+        assertFalse(firehoseProducer.isFlushFailed());
+    }
+
+
+    @Test
+    public void testFirehoseProducerMultiThreadFlushAndWaitHappyCase() throws Exception {
+        PutRecordBatchResult successResult = mock(PutRecordBatchResult.class);
+        ArgumentCaptor<PutRecordBatchRequest> captor = ArgumentCaptor.forClass(PutRecordBatchRequest.class);
+
+        when(firehoseClient.putRecordBatch(any(PutRecordBatchRequest.class))).thenReturn(successResult);
+
+        ExecutorService exec = Executors.newFixedThreadPool(4);
+        List<Callable<ListenableFuture<UserRecordResult>>> futures = new ArrayList<>();
+
+        for (int j = 0; j < 400; ++j) {
+            futures.add(() -> addRecord(firehoseProducer));
+        }
+
+        List<Future<ListenableFuture<UserRecordResult>>> results = exec.invokeAll(futures);
+
+        for (Future f : results) {
+            while(!f.isDone()) {
+                Thread.sleep(100);
+            }
+            SettableFuture fi = (SettableFuture) f.get();
+            UserRecordResult r = (UserRecordResult) fi.get();
+            assertTrue(r.isSuccessful());
+        }
+
+        while (firehoseProducer.getOutstandingRecordsCount() > 0 && !firehoseProducer.isFlushFailed()) {
+            firehoseProducer.flush();
+            try {
+                Thread.sleep(500);
+            } catch (InterruptedException ex) {
+                fail();
+            }
+        }
+
+        LOGGER.debug("Number of outstanding items: {}", firehoseProducer.getOutstandingRecordsCount());
+        verify(firehoseClient).putRecordBatch(captor.capture());
+        assertEquals(firehoseProducer.getOutstandingRecordsCount(), 0);
+        assertFalse(firehoseProducer.isFlushFailed());
     }
 
     @Test
@@ -136,23 +199,24 @@ public class FirehoseProducerTest {
     @Test
     public void testFirehoseProducerSingleThreadFailedToSendRecords() throws Exception {
         PutRecordBatchResult failedResult = new PutRecordBatchResult()
-            .withFailedPutCount(1)
-            .withRequestResponses(new PutRecordBatchResponseEntry()
-                .withErrorCode("400")
-                .withErrorMessage("Invalid Schema"));
+                .withFailedPutCount(1)
+                .withRequestResponses(new PutRecordBatchResponseEntry()
+                        .withErrorCode("400")
+                        .withErrorMessage("Invalid Schema"));
         when(firehoseClient.putRecordBatch(any(PutRecordBatchRequest.class))).thenReturn(failedResult);
 
         for (int i = 0; i < DEFAULT_MAX_BUFFER_SIZE; ++i) {
             addRecord(firehoseProducer);
         }
         Thread.sleep(2000);
-        assertTrue(firehoseProducer.getOutstandingRecordsCount() == 0);
+        assertEquals(firehoseProducer.getOutstandingRecordsCount(), DEFAULT_MAX_BUFFER_SIZE);
+        assertTrue(firehoseProducer.isFlushFailed());
     }
 
     private ListenableFuture<UserRecordResult> addRecord(final FirehoseProducer producer) {
         try {
             Record record = new Record().withData(ByteBuffer.wrap(
-                RandomStringUtils.randomAlphabetic(64).getBytes()));
+                    RandomStringUtils.randomAlphabetic(64).getBytes()));
             return producer.addUserRecord(record);
         } catch (Exception e) {
             throw new RuntimeException(e);

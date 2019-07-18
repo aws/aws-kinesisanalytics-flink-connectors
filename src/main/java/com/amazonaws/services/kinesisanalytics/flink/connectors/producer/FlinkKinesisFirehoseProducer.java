@@ -1,21 +1,3 @@
-/*
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package com.amazonaws.services.kinesisanalytics.flink.connectors.producer;
 
 
@@ -35,6 +17,9 @@ import com.google.common.util.concurrent.ListenableFuture;
 import org.apache.commons.lang3.Validate;
 import org.apache.flink.api.common.serialization.SerializationSchema;
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.runtime.state.FunctionInitializationContext;
+import org.apache.flink.runtime.state.FunctionSnapshotContext;
+import org.apache.flink.streaming.api.checkpoint.CheckpointedFunction;
 import org.apache.flink.streaming.api.functions.sink.RichSinkFunction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -47,7 +32,7 @@ import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.AW
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.producer.impl.FirehoseProducer.UserRecordResult;
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.util.AWSUtil.containsBasicProperties;
 
-public class FlinkKinesisFirehoseProducer<OUT> extends RichSinkFunction<OUT> {
+public class FlinkKinesisFirehoseProducer<OUT> extends RichSinkFunction<OUT> implements CheckpointedFunction {
     private static final Logger LOGGER = LoggerFactory.getLogger(FlinkKinesisFirehoseProducer.class);
 
     private final KinesisFirehoseSerializationSchema<OUT> schema;
@@ -83,13 +68,13 @@ public class FlinkKinesisFirehoseProducer<OUT> extends RichSinkFunction<OUT> {
      * @param credentialProviderType The specified Credential Provider type.
      */
     public FlinkKinesisFirehoseProducer(final String deliveryStream, final KinesisFirehoseSerializationSchema<OUT> schema,
-                                               final Properties configProps,
-                                               final CredentialProviderType credentialProviderType) {
+                                        final Properties configProps,
+                                        final CredentialProviderType credentialProviderType) {
         this.defaultDeliveryStream = Validate.notBlank(deliveryStream, "Delivery stream cannot be null or empty");
         this.schema = Validate.notNull(schema, "Kinesis serialization schema cannot be null");
         this.config = Validate.notNull(configProps, "Configuration properties cannot be null");
         this.credentialProviderType = Validate.notNull(credentialProviderType,
-            "Credential Provider type cannot be null");
+                "Credential Provider type cannot be null");
     }
 
     public FlinkKinesisFirehoseProducer(final String deliveryStream , final SerializationSchema<OUT> schema,
@@ -135,10 +120,10 @@ public class FlinkKinesisFirehoseProducer<OUT> extends RichSinkFunction<OUT> {
 
         /** This compare and swap exist only for testing purposes when passing an AmazonKinesisFirehoseAsync */
         this.firehoseClient = (firehoseClient != null) ? firehoseClient:
-            AWSUtil.createKinesisFirehoseClientFromConfiguration(config, credentialsProvider);
+                AWSUtil.createKinesisFirehoseClientFromConfiguration(config, credentialsProvider);
 
         this.firehoseProducer = (firehoseProducer != null) ? firehoseProducer :
-            new FirehoseProducer<>(defaultDeliveryStream, firehoseClient, config);
+                new FirehoseProducer<>(defaultDeliveryStream, firehoseClient, config);
         LOGGER.info("Started Kinesis Firehose client. Delivering to stream: {}", defaultDeliveryStream);
 
         this.monitorCallback = new FutureCallback<UserRecordResult>() {
@@ -176,13 +161,35 @@ public class FlinkKinesisFirehoseProducer<OUT> extends RichSinkFunction<OUT> {
         ByteBuffer serializedValue = schema.serialize(value);
 
         Validate.validState((firehoseProducer != null && !firehoseProducer.isDestroyed()),
-            "Firehose producer has been destroyed");
+                "Firehose producer has been destroyed");
         Validate.validState(firehoseClient != null, "Kinesis Firehose client has been closed");
 
         propagateAsyncExceptions();
 
         ListenableFuture<UserRecordResult> future = firehoseProducer.addUserRecord(new Record().withData(serializedValue));
         Futures.addCallback(future, monitorCallback);
+    }
+
+    @Override
+    public void snapshotState(final FunctionSnapshotContext functionSnapshotContext) throws Exception {
+        //Propagates asynchronously wherever exception that might happened previously.
+        propagateAsyncExceptions();
+
+        //Forces the Firehose producer to flush the buffer.
+        LOGGER.debug("Outstanding records before snapshot: {}", firehoseProducer.getOutstandingRecordsCount());
+        flushSync();
+        LOGGER.debug("Outstanding records after snapshot: {}", firehoseProducer.getOutstandingRecordsCount());
+        if (firehoseProducer.getOutstandingRecordsCount() > 0) {
+            throw new IllegalStateException("An error has occurred trying to flush the buffer synchronously.");
+        }
+
+        // If the flush produced any exceptions, we should propagates it also and fail the checkpoint.
+        propagateAsyncExceptions();
+    }
+
+    @Override
+    public void initializeState(final FunctionInitializationContext functionInitializationContext) throws Exception {
+        //No Op
     }
 
     @Override
@@ -194,6 +201,7 @@ public class FlinkKinesisFirehoseProducer<OUT> extends RichSinkFunction<OUT> {
             LOGGER.error(ex.getMessage(), ex);
             throw ex;
         } finally {
+            flushSync();
             firehoseProducer.destroy();
             if (firehoseClient != null) {
                 LOGGER.debug("Shutting down Kinesis Firehose client...");
@@ -204,7 +212,7 @@ public class FlinkKinesisFirehoseProducer<OUT> extends RichSinkFunction<OUT> {
 
     private static CredentialProviderType getCredentialProviderType(final Properties configProps) {
         return (containsBasicProperties(configProps) ?
-            CredentialProviderType.BASIC : CredentialProviderType.AUTO);
+                CredentialProviderType.BASIC : CredentialProviderType.AUTO);
     }
 
     private void propagateAsyncExceptions() throws Exception {
@@ -218,6 +226,22 @@ public class FlinkKinesisFirehoseProducer<OUT> extends RichSinkFunction<OUT> {
         } else {
             LOGGER.warn(msg, lastThrownException);
             lastThrownException = null;
+        }
+    }
+
+    /**
+     * This method waits until the buffer is flushed, an error has occurred or the thread was interrupted.
+     */
+    private void flushSync() {
+        while (firehoseProducer.getOutstandingRecordsCount() > 0 && !firehoseProducer.isFlushFailed()) {
+            firehoseProducer.flush();
+            try {
+                LOGGER.debug("Number of outstanding records before going to sleep: {}", firehoseProducer.getOutstandingRecordsCount());
+                Thread.sleep(500);
+            } catch (InterruptedException ex) {
+                LOGGER.warn("Flushing has been interrupted.");
+                break;
+            }
         }
     }
 }
