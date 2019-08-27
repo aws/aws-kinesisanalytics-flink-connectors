@@ -213,6 +213,32 @@ public class FirehoseProducerTest {
         assertTrue(firehoseProducer.isFlushFailed());
     }
 
+    /**
+     * This test is responsible for checking if the consumer thread has performed the work or not, with
+     * retry finally can consume all data.
+     * @throws Exception
+     */
+    @Test
+    public void testFirehoseProducerSingleThreadHappyToRetry() throws Exception {
+        PutRecordBatchResult failedResult = new PutRecordBatchResult()
+                .withFailedPutCount(1)
+                .withRequestResponses(new PutRecordBatchResponseEntry()
+                        .withErrorCode("500")
+                        .withErrorMessage("Service Unavailable"));
+        PutRecordBatchResult successResult = new PutRecordBatchResult();
+        when(firehoseClient.putRecordBatch(any(PutRecordBatchRequest.class)))
+                .thenReturn(failedResult)
+                .thenReturn(successResult);
+
+        for (int i = 0; i < DEFAULT_MAX_BUFFER_SIZE; ++i) {
+            addRecord(firehoseProducer);
+        }
+        Thread.sleep(2000);
+        assertEquals(firehoseProducer.getOutstandingRecordsCount(), 0);
+        assertTrue(!firehoseProducer.isFlushFailed());
+    }
+
+
     private ListenableFuture<UserRecordResult> addRecord(final FirehoseProducer producer) {
         try {
             Record record = new Record().withData(ByteBuffer.wrap(

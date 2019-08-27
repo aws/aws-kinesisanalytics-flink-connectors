@@ -306,22 +306,32 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
         }
     }
 
-    private void submitBatchWithRetry(final Queue<Record> records) throws AmazonKinesisFirehoseException,
+    private void submitBatchWithRetry(Queue<Record> records) throws AmazonKinesisFirehoseException,
             RecordCouldNotBeSentException {
 
         PutRecordBatchResult lastResult;
         String warnMessage = null;
+        Queue<Record> failureRecords = new ArrayDeque<>();
+        int submittedRecordsCount = 0;
         for (int attempts = 0; attempts < numberOfRetries; attempts++) {
             try {
-                LOGGER.debug("Trying to flush Buffer of size: {} on attempt: {}", records.size(), attempts);
+                if ( failureRecords.size() > 0) {
+                    LOGGER.info("Trying to retry FAILURE Buffer of size: {} on attempt: {}" ,
+                            failureRecords.size(), attempts);
+                    records = failureRecords;
+                } else {
+                    LOGGER.info("Trying to flush Buffer of size: {} on attempt: {}", records.size(), attempts);
+                }
 
                 lastResult = submitBatch(records);
+                submittedRecordsCount += records.size() -
+                        (lastResult.getFailedPutCount() != null ? lastResult.getFailedPutCount() : 0);
 
                 if (lastResult.getFailedPutCount() == null || lastResult.getFailedPutCount() == 0) {
 
                     lastSucceededFlushTimestamp = System.nanoTime();
-                    LOGGER.debug("Firehose Buffer has been flushed with size: {} on attempt: {}",
-                            records.size(), attempts);
+                    LOGGER.info("Firehose Buffer has been flushed with size: {} on {} attempts ",
+                            submittedRecordsCount, attempts + 1);
                     return;
                 }
 
@@ -330,6 +340,8 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
                         .filter(r -> r.getRecordId() == null)
                         .findFirst()
                         .orElse(null);
+
+                failureRecords = getFailureSubmitRecords(lastResult, records);
 
                 warnMessage = String.format("Number of failed records: %s.", lastResult.getFailedPutCount());
                 if (failedRecord != null) {
@@ -376,6 +388,25 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
             throw e;
         }
         return result;
+    }
+
+    /**
+     * Get the failure records from last submit result.
+     * @param result The result from the latest submission.
+     * @param submittedRecords The records submitted latest.
+     * @return failure records collection.
+     */
+    private Queue<Record> getFailureSubmitRecords(PutRecordBatchResult result,
+                                                  Queue<Record> submittedRecords) {
+        Queue<Record> queue = new ArrayDeque<>();
+        Object[] records = submittedRecords.toArray();
+        for (int i = 0 ; i < result.getRequestResponses().size() ; i++) {
+            if (result.getRequestResponses().get(i).getRecordId() == null) {
+                queue.offer((Record)records[i]);
+            }
+        }
+        LOGGER.warn("total failures {} of {}", queue.size(), records.length);
+        return queue;
     }
 
     /**
