@@ -179,8 +179,9 @@ public class FlinkKinesisFirehoseProducer<OUT> extends RichSinkFunction<OUT> imp
         LOGGER.debug("Outstanding records before snapshot: {}", firehoseProducer.getOutstandingRecordsCount());
         flushSync();
         LOGGER.debug("Outstanding records after snapshot: {}", firehoseProducer.getOutstandingRecordsCount());
-        if (firehoseProducer.getOutstandingRecordsCount() > 0) {
-            throw new IllegalStateException("An error has occurred trying to flush the buffer synchronously.");
+        if (firehoseProducer.isFlushFailed()) {
+            throw new IllegalStateException("An error has occurred trying to flush the buffer synchronously.",
+                    firehoseProducer.getLastThrowNonRetryableExecption());
         }
 
         // If the flush produced any exceptions, we should propagates it also and fail the checkpoint.

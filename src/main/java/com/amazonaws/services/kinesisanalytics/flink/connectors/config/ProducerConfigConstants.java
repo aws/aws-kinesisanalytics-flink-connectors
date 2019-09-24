@@ -34,6 +34,9 @@ public class ProducerConfigConstants {
     /** The MAX default timeout for a given addUserRecord operation */
     public static final long DEFAULT_MAX_OPERATION_TIMEOUT = TimeUnit.MINUTES.toMillis(5);
 
+    /** The MAX default waiting time of printing warn log for a given addUserRecord operation */
+    public static final long MAX_WAITING_TIME_PRINTING_WARN = TimeUnit.MINUTES.toMillis(5);
+
     /** The default wait time in milliseconds in case a buffer is full */
     public static final long DEFAULT_WAIT_TIME_FOR_BUFFER_FULL = 100L;
 
@@ -41,7 +44,7 @@ public class ProducerConfigConstants {
     public static final long DEFAULT_INTERVAL_BETWEEN_FLUSHES = 50L;
 
     /** The default MAX number of retries in case of recoverable failures */
-    public static final int DEFAULT_NUMBER_OF_RETRIES = 10;
+    public static final int DEFAULT_NUMBER_OF_RETRIES = Integer.MAX_VALUE;
 
     /** The default MAX backoff timeout
      * https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/

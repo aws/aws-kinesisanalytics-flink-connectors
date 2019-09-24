@@ -16,6 +16,7 @@ import com.google.common.util.concurrent.SettableFuture;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import org.apache.commons.lang3.RandomUtils;
 import org.apache.commons.lang3.Validate;
+import org.apache.flink.shaded.curator.org.apache.curator.shaded.com.google.common.annotations.VisibleForTesting;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -44,6 +45,7 @@ import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.Pr
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.ProducerConfigConstants.FIREHOSE_PRODUCER_BUFFER_MAX_SIZE;
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.ProducerConfigConstants.FIREHOSE_PRODUCER_BUFFER_MAX_TIMEOUT;
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.ProducerConfigConstants.FIREHOSE_PRODUCER_MAX_OPERATION_TIMEOUT;
+import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.ProducerConfigConstants.MAX_WAITING_TIME_PRINTING_WARN;
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.producer.impl.FirehoseProducer.UserRecordResult;
 
 @ThreadSafe
@@ -88,7 +90,8 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
     private final String deliveryStream;
 
     /** Scheduler service responsible for flushing the producer Buffer pool */
-    private final ExecutorService flusher;
+    @VisibleForTesting
+    final ExecutorService flusher;
 
     /** Object lock responsible for guarding the producer Buffer pool */
     @GuardedBy("this")
@@ -110,8 +113,11 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
      * This flag should be used only to request a flush from the caller thread through the {@link #flush()} method. */
     private volatile boolean syncFlush;
 
-    /** A flag representing if the Flusher thread has failed. */
-    private volatile boolean isFlusherFailed;
+    /** Last seen Non-retryable Exception */
+    private volatile AmazonKinesisFirehoseException lastThrowNonRetryableExecption;
+
+    /** Buffer for failed submitted records */
+    private volatile Queue<Record>  failureBuffer;
 
     public FirehoseProducer(final String deliveryStream, final AmazonKinesisFirehose firehoseClient,
                             final Properties configProps) {
@@ -132,7 +138,7 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
 
         this.numberOfRetries = Integer.valueOf(configProps.getProperty(FIREHOSE_PRODUCER_BUFFER_FLUSH_MAX_NUMBER_OF_RETRIES,
                 String.valueOf(DEFAULT_NUMBER_OF_RETRIES)));
-        Validate.isTrue(numberOfRetries >= 0, "Number of retries cannot be negative.");
+        Validate.isTrue(numberOfRetries > 0, "Number of retries cannot be negative.");
 
         this.bufferFullWaitTimeoutInMillis = Long.valueOf(configProps.getProperty(FIREHOSE_PRODUCER_BUFFER_FULL_WAIT_TIMEOUT,
                 String.valueOf(DEFAULT_WAIT_TIME_FOR_BUFFER_FULL)));
@@ -156,6 +162,7 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
 
         this.producerBuffer = new ArrayDeque<>(maxBufferSize);
         this.flusherBuffer = new ArrayDeque<>(maxBufferSize);
+        this.failureBuffer = new ArrayDeque<>(maxBufferSize);
 
         flusher = Executors.newSingleThreadExecutor(new ThreadFactoryBuilder()
                 .setDaemon(false)
@@ -164,9 +171,99 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
         flusher.submit(() -> flushBuffer());
     }
 
+    /**
+     * This is for unit test.
+     */
+    @VisibleForTesting
+    FirehoseProducer(final String deliveryStream, final AmazonKinesisFirehose firehoseClient, final int maxBufferSize,
+                     final int bufferTimeoutInMillis, final int numberOfRetries, final int bufferFullWaitTimeoutInMillis,
+                     final int bufferTimeoutBetweenFlushes, final int maxBackOffInMillis, final int baseBackOffInMillis,
+                     final int maxOperationTimeoutInMillis) {
+        this.firehoseClient = Validate.notNull(firehoseClient, "Kinesis Firehose client cannot be null");
+        this.deliveryStream = Validate.notBlank(deliveryStream, "Kinesis Firehose delivery stream cannot be null or empty.");
+
+        this.maxBufferSize = maxBufferSize == 0 ? DEFAULT_MAX_BUFFER_SIZE : maxBufferSize;
+
+        this.bufferTimeoutInMillis = bufferTimeoutInMillis == 0 ? DEFAULT_MAX_BUFFER_TIMEOUT : bufferTimeoutInMillis;
+
+        this.numberOfRetries = numberOfRetries == 0 ? DEFAULT_NUMBER_OF_RETRIES : numberOfRetries;
+
+        this.bufferFullWaitTimeoutInMillis = bufferFullWaitTimeoutInMillis == 0 ? DEFAULT_WAIT_TIME_FOR_BUFFER_FULL : bufferFullWaitTimeoutInMillis;
+
+        this.bufferTimeoutBetweenFlushes = bufferTimeoutBetweenFlushes == 0 ? DEFAULT_INTERVAL_BETWEEN_FLUSHES : bufferTimeoutBetweenFlushes;
+
+        this.maxBackOffInMillis = maxBackOffInMillis == 0 ? DEFAULT_MAX_BACKOFF : maxBackOffInMillis;
+
+        this.baseBackOffInMillis = baseBackOffInMillis == 0 ? DEFAULT_BASE_BACKOFF : baseBackOffInMillis;
+
+        this.maxOperationTimeoutInMillis = maxOperationTimeoutInMillis == 0 ? DEFAULT_MAX_OPERATION_TIMEOUT : maxOperationTimeoutInMillis;
+
+        this.producerBuffer = new ArrayDeque<>(maxBufferSize);
+        this.flusherBuffer = new ArrayDeque<>(maxBufferSize);
+        this.failureBuffer = new ArrayDeque<>(maxBufferSize);
+
+        flusher = Executors.newSingleThreadExecutor(new ThreadFactoryBuilder()
+                .setDaemon(false)
+                .setNameFormat("kda-writer-thread-%d")
+                .build());
+    }
+
+
+    /**
+     * This method is responsible for taking a lock adding a {@code Record} into the producerBuffer, in case the producerBuffer
+     * waits releasing the lock for the given {@code bufferFullWaitTimeoutInMillis}. If it's more than {@code MAX_WAITING_TIME_
+     * there are still records in flusher buffer, the warn log will be print as flusher is trying to flushing all records.
+     * @param record the type of data to be buffered
+     * @return
+     * @throws AmazonKinesisFirehoseException if the operation got stuck and is not able to proceed.
+     * @throws InterruptedException if any thread interrupted the current thread before or while the current thread
+     * was waiting for a notification.  The <i>interrupted status</i> of the current thread is cleared when
+     * this exception is thrown.
+     */
     @Override
-    public ListenableFuture<O> addUserRecord(final R record) throws Exception {
-        return addUserRecord(record, maxOperationTimeoutInMillis);
+    public ListenableFuture<O> addUserRecord(final R record) throws AmazonKinesisFirehoseException,
+            InterruptedException {
+        Validate.notNull(record, "Record cannot be null.");
+        long waitingTimeInNanos = TimeUnit.MILLISECONDS.toNanos(MAX_WAITING_TIME_PRINTING_WARN);
+
+        synchronized (producerBufferLock) {
+            /** This happens whenever the current thread is trying to write, however, the Producer Buffer is full.
+             * This guarantees if the writer thread is already running, should wait.
+             * If there is non-retryable exception is thrown while flushing the buffer, throw an exception here.
+             */
+            long lastTimestamp = System.nanoTime();
+            while (producerBuffer.size() >= maxBufferSize) {
+                if ((System.nanoTime() - lastTimestamp) >= waitingTimeInNanos) {
+                    LOGGER.warn("Still waiting for flusher thread flushing the buffer");
+                    lastTimestamp = System.nanoTime();
+                }
+
+                if (isFlushFailed()) {
+                    throw lastThrowNonRetryableExecption;
+                }
+
+                /** If the buffer is filled and the flusher isn't running yet we notify to wake up the flusher */
+                if (flusherBuffer.isEmpty()) {
+                    producerBufferLock.notify();
+                }
+
+                producerBufferLock.wait(bufferFullWaitTimeoutInMillis);
+            }
+
+            producerBuffer.offer(record);
+
+            /** If the buffer was filled up right after the last insertion we would like to wake up the flusher thread
+             * and send the buffered data to Kinesis Firehose as soon as possible */
+            if (producerBuffer.size() >= maxBufferSize && flusherBuffer.isEmpty()) {
+                producerBufferLock.notify();
+            } else if(isFlushFailed()) {
+                throw lastThrowNonRetryableExecption;
+            }
+        }
+        UserRecordResult recordResult = new UserRecordResult().setSuccessful(true);
+        SettableFuture<O> futureResult = SettableFuture.create();
+        futureResult.set((O) recordResult);
+        return futureResult;
     }
 
     /**
@@ -183,6 +280,7 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
      * this exception is thrown.
      */
     @Override
+    @Deprecated
     public ListenableFuture<O> addUserRecord(final R record, final long timeoutInMillis)
             throws TimeoutExpiredException, InterruptedException {
 
@@ -230,7 +328,8 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
      * If an unhandled exception is thrown the flusher thread should fail, logging the failure.
      * However, this behavior will block the producer to move on until hit the given timeout and throw {@code {@link TimeoutExpiredException}}
      */
-    private void flushBuffer() {
+    @VisibleForTesting
+    protected void flushBuffer() {
 
         lastSucceededFlushTimestamp = System.nanoTime();
         long bufferTimeoutInNanos = TimeUnit.MILLISECONDS.toNanos(bufferTimeoutInMillis);
@@ -241,8 +340,8 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
 
             synchronized (producerBufferLock) {
 
-                /** If the flusher buffer is not empty at this point we should fail, otherwise we would end up looping
-                 * forever since we are swapping references */
+                /** If the failure buffer is not empty at this point we should flush the failure  buffer first until
+                 * failure buffer has been clear out */
                 Validate.validState(flusherBuffer.isEmpty());
 
                 if (isDestroyed) {
@@ -251,8 +350,14 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
                         (timeoutFlush && producerBuffer.size() > 0))) {
 
                     Queue<Record> tmpBuffer = flusherBuffer;
-                    flusherBuffer = producerBuffer;
-                    producerBuffer = tmpBuffer;
+                    if (failureBuffer.isEmpty()) {
+                        flusherBuffer = producerBuffer;
+                        producerBuffer = tmpBuffer;
+                    } else {
+                        LOGGER.debug("flushing failed buffer first");
+                        flusherBuffer = failureBuffer;
+                        failureBuffer = tmpBuffer;
+                    }
                     producerBufferLock.notify();
 
                 } else {
@@ -270,6 +375,19 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
             try {
                 submitBatchWithRetry(flusherBuffer);
 
+            } catch (RecordCouldNotBeSentException ex) {
+                LOGGER.error("We have reached the maximum retry limits, but still have {} records NOT been flushed",
+                        failureBuffer.size());
+            } catch (AmazonKinesisFirehoseException ex) {
+                String errorMsg = "An error has occurred while trying to send data to Kinesis Firehose.";
+
+                LOGGER.error(errorMsg, ex);
+                synchronized (producerBufferLock) {
+                    lastThrowNonRetryableExecption = ex;
+                }
+
+                throw ex;
+            } finally {
                 Queue<Record> emptyFlushBuffer = new ArrayDeque<>(maxBufferSize);
                 synchronized (producerBufferLock) {
                     /** We perform a swap at this point because {@code ArrayDeque<>.clear()} iterates over the items nullifying
@@ -277,54 +395,46 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
                     Validate.validState(!flusherBuffer.isEmpty());
                     flusherBuffer = emptyFlushBuffer;
 
-                    if (syncFlush) {
+                    if (syncFlush && failureBuffer.isEmpty()) {
                         syncFlush = false;
                         producerBufferLock.notify();
                     }
                 }
-
-            } catch (Exception ex) {
-                String errorMsg = "An error has occurred while trying to send data to Kinesis Firehose.";
-
-                if (ex instanceof AmazonKinesisFirehoseException &&
-                        ((AmazonKinesisFirehoseException) ex).getStatusCode() == 413) {
-
-                    LOGGER.error(errorMsg +
-                            "Batch of records too large. Please try to reduce your batch size by passing " +
-                            "FIREHOSE_PRODUCER_BUFFER_MAX_SIZE into your configuration.", ex);
-
-                } else {
-                    LOGGER.error(errorMsg, ex);
-                }
-
-                synchronized (producerBufferLock) {
-                    isFlusherFailed = true;
-                }
-
-                throw ex;
             }
         }
     }
 
-    private void submitBatchWithRetry(final Queue<Record> records) throws AmazonKinesisFirehoseException,
+    @VisibleForTesting
+    protected void submitBatchWithRetry(Queue<Record> records) throws AmazonKinesisFirehoseException,
             RecordCouldNotBeSentException {
 
         PutRecordBatchResult lastResult;
         String warnMessage = null;
+        Queue<Record> failureRecords = new ArrayDeque<>();
+        int totalSubmitted = 0;
         for (int attempts = 0; attempts < numberOfRetries; attempts++) {
             try {
-                LOGGER.debug("Trying to flush Buffer of size: {} on attempt: {}", records.size(), attempts);
+                if (failureRecords.size() > 0) {
+                    LOGGER.debug("Retrying to flush failure Buffer of size: {} on attempt: {}" ,
+                            failureRecords.size(), attempts);
+                    records = failureRecords;
+                } else {
+                    LOGGER.debug("Trying to flush Buffer of size: {} on attempt: {}", records.size(), attempts);
+                }
 
                 lastResult = submitBatch(records);
+                totalSubmitted += records.size() -
+                        (lastResult.getFailedPutCount() != null ? lastResult.getFailedPutCount() : 0);
 
                 if (lastResult.getFailedPutCount() == null || lastResult.getFailedPutCount() == 0) {
 
                     lastSucceededFlushTimestamp = System.nanoTime();
-                    LOGGER.debug("Firehose Buffer has been flushed with size: {} on attempt: {}",
-                            records.size(), attempts);
+                    LOGGER.debug("Firehose Buffer has been flushed with size: {} on {} attempts ",
+                            totalSubmitted, attempts + 1);
                     return;
                 }
 
+                failureRecords = getFailedPutRecords(lastResult, records);
                 PutRecordBatchResponseEntry failedRecord = lastResult.getRequestResponses()
                         .stream()
                         .filter(r -> r.getRecordId() == null)
@@ -333,7 +443,7 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
 
                 warnMessage = String.format("Number of failed records: %s.", lastResult.getFailedPutCount());
                 if (failedRecord != null) {
-                    warnMessage = String.format("Last Kinesis Firehose putRecordBath encountered an error and failed " +
+                    warnMessage = String.format("Last Kinesis Firehose putRecordBatch encountered an error and failed " +
                                     "trying to put: %s records with error: %s - %s.",
                             lastResult.getFailedPutCount(), failedRecord.getErrorCode(), failedRecord.getErrorMessage());
                 }
@@ -347,11 +457,26 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
 
             } catch (ServiceUnavailableException ex) {
                 LOGGER.info("Kinesis Firehose has thrown a recoverable exception.", ex);
+                warnMessage = ex.getMessage();
             } catch (InterruptedException e) {
                 LOGGER.info("An interrupted exception has been thrown between retry attempts.", e);
+                warnMessage = e.getMessage();
             } catch (AmazonKinesisFirehoseException ex) {
-                throw ex;
+                String errorMsg = "An error has occurred while trying to send data to Kinesis Firehose.";
+
+                if (ex.getStatusCode() >= 500) {
+                    LOGGER.error( "Serivce is not available right now, will retry to submit later" ,ex);
+                } else {
+                    LOGGER.error(errorMsg + "Got non-retryable exception, going to throw it");
+                    throw ex;
+                }
             }
+        }
+        LOGGER.debug("Firehose Buffer has been flushed with size: {} on {} total retries ",
+                totalSubmitted , numberOfRetries);
+
+        synchronized (producerBufferLock) {
+            failureBuffer = failureRecords;
         }
 
         throw new RecordCouldNotBeSentException("Exceeded number of attempts! " + warnMessage);
@@ -362,7 +487,7 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
      * @param records a Collection of records
      * @return {@code PutRecordBatchResult}
      */
-    private PutRecordBatchResult submitBatch(final Queue<Record> records) throws AmazonKinesisFirehoseException {
+    protected PutRecordBatchResult submitBatch(final Queue<Record> records) throws AmazonKinesisFirehoseException {
 
         LOGGER.debug("Sending {} records to Kinesis Firehose on stream: {}", records.size(),
                 deliveryStream);
@@ -376,6 +501,24 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
             throw e;
         }
         return result;
+    }
+
+    /**
+     * Get the failure records from last submit result.
+     * @param result The result from the latest submission.
+     * @param submittedRecords The records submitted latest.
+     * @return failure records collection.
+     **/
+    private Queue<Record> getFailedPutRecords(PutRecordBatchResult result,
+                                              Queue<Record> submittedRecords) {
+        Queue<Record> queue = new ArrayDeque<>();
+        Object[] records = submittedRecords.toArray();
+        for (int i = 0 ; i < result.getRequestResponses().size() ; i++) {
+            if (result.getRequestResponses().get(i).getRecordId() == null) {
+                queue.offer((Record)records[i]);
+            }
+        }
+        return queue;
     }
 
     /**
@@ -416,15 +559,20 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
     @Override
     public int getOutstandingRecordsCount() {
         synchronized (producerBufferLock) {
-            return producerBuffer.size() + flusherBuffer.size();
+            return producerBuffer.size() + flusherBuffer.size() + failureBuffer.size();
         }
     }
 
     @Override
     public boolean isFlushFailed() {
         synchronized (producerBufferLock) {
-            return isFlusherFailed;
+            return lastThrowNonRetryableExecption != null;
         }
+    }
+
+    @Override
+    public AmazonKinesisFirehoseException getLastThrowNonRetryableExecption() {
+        return lastThrowNonRetryableExecption;
     }
 
     /**
