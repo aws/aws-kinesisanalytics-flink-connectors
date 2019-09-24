@@ -1,5 +1,6 @@
 package com.amazonaws.services.kinesisanalytics.flink.connectors.producer;
 
+import com.amazonaws.services.kinesisfirehose.model.AmazonKinesisFirehoseException;
 import com.google.common.util.concurrent.ListenableFuture;
 
 /**
@@ -57,4 +58,10 @@ public interface IProducer<O, R> {
      * @return {@code boolean} representing whether the success of failure of flush buffer operation.
      */
     boolean isFlushFailed();
+
+    /**
+     * Return last thrown non-retryable exception.
+     * @return
+     */
+     AmazonKinesisFirehoseException getLastThrowNonRetryableExecption();
 }
