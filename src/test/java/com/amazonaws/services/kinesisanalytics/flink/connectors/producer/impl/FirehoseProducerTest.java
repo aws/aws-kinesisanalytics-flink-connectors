@@ -233,6 +233,32 @@ public class FirehoseProducerTest {
         assertFalse(firehoseProducer.isFlushFailed());
     }
 
+    @Test
+    public void testFlinkKinesisFirehoseProducerFlushesFailsIfOneRecordBreaksLimit() throws Exception {
+        ArgumentCaptor<PutRecordBatchRequest> captor = ArgumentCaptor.forClass(PutRecordBatchRequest.class);
+        PutRecordBatchResult failedResult = new PutRecordBatchResult()
+                .withFailedPutCount(4)
+                .withRequestResponses(new PutRecordBatchResponseEntry()
+                        .withErrorCode("400")
+                        .withErrorMessage("Records size exceeds 4 MB limit"));
+        PutRecordBatchResult successResult = new PutRecordBatchResult();
+        AmazonKinesisFirehoseException firehoseException = new AmazonKinesisFirehoseException("Records size exceeds 4 MB limit");
+        firehoseException.setStatusCode(400);
+
+        // We will add four records. This should split into two sends of two records each. These will in turn
+        // split into requests of individual records. If any of these records are still too large, we
+        // should give up.
+        when(firehoseClient.putRecordBatch(any(PutRecordBatchRequest.class))).thenThrow(firehoseException,
+                firehoseException, firehoseException);
+
+        for (int i = 0; i < 4; ++i) {
+            addRecord(firehoseProducer);
+        }
+        Thread.sleep(2000);
+        assertEquals(firehoseProducer.getOutstandingRecordsCount(), 4);
+        verify(firehoseClient, times(3)).putRecordBatch(captor.capture());
+        assertTrue(firehoseProducer.isFlushFailed());
+    }
 
     private ListenableFuture<UserRecordResult> addRecord(final FirehoseProducer producer) {
         try {

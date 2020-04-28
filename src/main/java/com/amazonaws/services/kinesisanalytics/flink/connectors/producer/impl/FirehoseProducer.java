@@ -285,17 +285,7 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
 
             } catch (Exception ex) {
                 String errorMsg = "An error has occurred while trying to send data to Kinesis Firehose.";
-
-                if (ex instanceof AmazonKinesisFirehoseException &&
-                         ex.getMessage().contains("Records size exceeds 4 MB limit")) {
-
-                    LOGGER.error(errorMsg +
-                            "Batch of records too large. Please try to reduce your batch size by passing " +
-                            "FIREHOSE_PRODUCER_BUFFER_MAX_SIZE into your configuration.", ex);
-
-                } else {
-                    LOGGER.error(errorMsg, ex);
-                }
+                LOGGER.error(errorMsg, ex);
 
                 synchronized (producerBufferLock) {
                     isFlusherFailed = true;
@@ -351,6 +341,10 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
             } catch (AmazonKinesisFirehoseException ex) {
                 if (ex.getStatusCode() == 400 && ex.getMessage().contains("Records size exceeds 4 MB limit")) {
                     // Send exceeded 4MB limit. Halve and try again.
+                    if (records.size() == 1) {
+                        // Failed to flush one record - do not split any further.
+                        throw new RecordCouldNotBeSentException("Failed to flush individual record. Record size exceeded Firehose limit. Ensure you are not creating records whose size exceeds the Firehose limit");
+                    }
                     ArrayList<Record> recordLst = new ArrayList<>(records);
                     boolean fstFlushed = submitBatchWithRetry(recordLst.subList(0, recordLst.size() / 2));
                     boolean sndFlushed = submitBatchWithRetry(recordLst.subList(recordLst.size() / 2, recordLst.size()));
