@@ -219,26 +219,6 @@ public class FlinkKinesisFirehoseProducerTest {
     }
 
     @Test
-    public void testFlinkKinesisFirehoseProducerFlushesByteLimit() throws Exception {
-        // Firehose limit is 4MB
-        String longRecord = StringUtils.repeat("*", (int) 5e6);
-        when(firehoseProducer.addUserRecord(new Record().withData(ByteBuffer.wrap(longRecord.getBytes()))))
-        // when(firehoseProducer.addUserRecord(any(Record.class)))
-                .thenReturn(getUserRecordResult(false, true));
-
-        doNothing().when(firehoseProducer).flush();
-
-        when(firehoseProducer.getOutstandingRecordsCount()).thenReturn(1).thenReturn(0);
-        when(firehoseProducer.isFlushFailed()).thenReturn(false);
-
-        flinkKinesisFirehoseProducer.open(properties);
-        flinkKinesisFirehoseProducer.invoke(longRecord, context);
-        flinkKinesisFirehoseProducer.close();
-
-        verify(firehoseProducer, times(1)).flush();
-    }
-
-    @Test
     public void testFlinkKinesisFirehoseProducerTakeSnapshotHappyWorkflow() throws Exception {
 
         when(firehoseProducer.addUserRecord(any(Record.class)))

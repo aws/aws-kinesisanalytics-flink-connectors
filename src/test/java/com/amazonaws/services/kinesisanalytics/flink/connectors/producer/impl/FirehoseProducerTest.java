@@ -1,13 +1,11 @@
 package com.amazonaws.services.kinesisanalytics.flink.connectors.producer.impl;
 
 import com.amazonaws.services.kinesisfirehose.AmazonKinesisFirehose;
-import com.amazonaws.services.kinesisfirehose.model.PutRecordBatchRequest;
-import com.amazonaws.services.kinesisfirehose.model.PutRecordBatchResponseEntry;
-import com.amazonaws.services.kinesisfirehose.model.PutRecordBatchResult;
-import com.amazonaws.services.kinesisfirehose.model.Record;
+import com.amazonaws.services.kinesisfirehose.model.*;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
 import org.apache.commons.lang3.RandomStringUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
@@ -30,9 +28,8 @@ import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.Pr
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.producer.impl.FirehoseProducer.UserRecordResult;
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.testutils.TestUtils.DEFAULT_DELIVERY_STREAM;
 import static org.mockito.Matchers.any;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.times;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertTrue;
@@ -192,8 +189,8 @@ public class FirehoseProducerTest {
     }
 
     /**
-     * This test is responsible for checking if the consumer thread has performed the work or not, so there is no way to
-     * throw an exception to be catch here, so the assertion goes along the fact if the buffer was flushed or not.
+     * This test is responsible for checking if the consumer thread has performed the work or not. There is no way to
+     * throw an exception to be caught here, so we assert whether the buffer was flushed or not.
      * @throws Exception
      */
     @Test
@@ -212,6 +209,30 @@ public class FirehoseProducerTest {
         assertEquals(firehoseProducer.getOutstandingRecordsCount(), DEFAULT_MAX_BUFFER_SIZE);
         assertTrue(firehoseProducer.isFlushFailed());
     }
+
+    @Test
+    public void testFlinkKinesisFirehoseProducerFlushesFailsPayloadTooLarge() throws Exception {
+        ArgumentCaptor<PutRecordBatchRequest> captor = ArgumentCaptor.forClass(PutRecordBatchRequest.class);
+        PutRecordBatchResult failedResult = new PutRecordBatchResult()
+                .withFailedPutCount(100)
+                .withRequestResponses(new PutRecordBatchResponseEntry()
+                        .withErrorCode("400")
+                        .withErrorMessage("Records size exceeds 4 MB limit"));
+        PutRecordBatchResult successResult = new PutRecordBatchResult();
+        AmazonKinesisFirehoseException firehoseException = new AmazonKinesisFirehoseException("Records size exceeds 4 MB limit");
+        firehoseException.setStatusCode(400);
+        when(firehoseClient.putRecordBatch(any(PutRecordBatchRequest.class))).thenThrow(firehoseException)
+                .thenReturn(successResult, successResult);
+
+        for (int i = 0; i < DEFAULT_MAX_BUFFER_SIZE; ++i) {
+            addRecord(firehoseProducer);
+        }
+        Thread.sleep(2000);
+        assertEquals(firehoseProducer.getOutstandingRecordsCount(), 0);
+        verify(firehoseClient, times(3)).putRecordBatch(captor.capture());
+        assertFalse(firehoseProducer.isFlushFailed());
+    }
+
 
     private ListenableFuture<UserRecordResult> addRecord(final FirehoseProducer producer) {
         try {

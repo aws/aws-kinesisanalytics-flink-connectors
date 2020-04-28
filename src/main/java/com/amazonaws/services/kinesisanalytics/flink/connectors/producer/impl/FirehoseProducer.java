@@ -266,7 +266,9 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
              * any changes to the object and the producer thread does not make any modifications to the flusherBuffer.
              * The only agent making changes to flusherBuffer is the flusher thread. */
             try {
-                submitBatchWithRetry(flusherBuffer);
+                if (submitBatchWithRetry(flusherBuffer)) {
+                    lastSucceededFlushTimestamp = System.nanoTime();
+                };
 
                 Queue<Record> emptyFlushBuffer = new ArrayDeque<>(maxBufferSize);
                 synchronized (producerBufferLock) {
@@ -304,7 +306,8 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
         }
     }
 
-    private void submitBatchWithRetry(final Collection<Record> records) throws AmazonKinesisFirehoseException,
+    // returns whether or not all provided Records could be sent to Firehose
+    private boolean submitBatchWithRetry(final Collection<Record> records) throws AmazonKinesisFirehoseException,
             RecordCouldNotBeSentException {
 
         PutRecordBatchResult lastResult;
@@ -316,10 +319,9 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
                 lastResult = submitBatch(records);
 
                 if (lastResult.getFailedPutCount() == null || lastResult.getFailedPutCount() == 0) {
-                    lastSucceededFlushTimestamp = System.nanoTime();
                     LOGGER.debug("Firehose Buffer has been flushed with size: {} on attempt: {}",
                             records.size(), attempts);
-                    return;
+                    return true;
                 }
 
                 PutRecordBatchResponseEntry failedRecord = lastResult.getRequestResponses()
@@ -347,12 +349,12 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
             } catch (InterruptedException e) {
                 LOGGER.info("An interrupted exception has been thrown between retry attempts.", e);
             } catch (AmazonKinesisFirehoseException ex) {
-                if (ex.getMessage().contains("Records size exceeds 4 MB limit")) {
+                if (ex.getStatusCode() == 400 && ex.getMessage().contains("Records size exceeds 4 MB limit")) {
                     // Send exceeded 4MB limit. Halve and try again.
-                    ArrayList<Record> recordLst = new ArrayList<>();
-                    recordLst.addAll(records);
-                    submitBatchWithRetry(recordLst.subList(0, recordLst.size() / 2));
-                    submitBatchWithRetry(recordLst.subList(recordLst.size() / 2, recordLst.size()));
+                    ArrayList<Record> recordLst = new ArrayList<>(records);
+                    boolean fstFlushed = submitBatchWithRetry(recordLst.subList(0, recordLst.size() / 2));
+                    boolean sndFlushed = submitBatchWithRetry(recordLst.subList(recordLst.size() / 2, recordLst.size()));
+                    return fstFlushed && sndFlushed;
                 } else {
                     throw ex;
                 }
