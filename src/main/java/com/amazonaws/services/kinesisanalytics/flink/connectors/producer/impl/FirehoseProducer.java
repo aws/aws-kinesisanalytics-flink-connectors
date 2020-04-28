@@ -21,9 +21,7 @@ import org.slf4j.LoggerFactory;
 
 import javax.annotation.concurrent.GuardedBy;
 import javax.annotation.concurrent.ThreadSafe;
-import java.util.ArrayDeque;
-import java.util.Properties;
-import java.util.Queue;
+import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -225,8 +223,8 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
     }
 
     /**
-     * This method runs in a background thread responsible for flushing the Producer Buffer in case the buffer is full,
-     * not enough records into the buffer and timeout has expired or flusher timeout has expired.
+     * This method runs in a background thread responsible for flushing the Producer Buffer in case the buffer is full
+     * or the buffer is not full but the timeout has expired.
      * If an unhandled exception is thrown the flusher thread should fail, logging the failure.
      * However, this behavior will block the producer to move on until hit the given timeout and throw {@code {@link TimeoutExpiredException}}
      */
@@ -287,7 +285,7 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
                 String errorMsg = "An error has occurred while trying to send data to Kinesis Firehose.";
 
                 if (ex instanceof AmazonKinesisFirehoseException &&
-                        ((AmazonKinesisFirehoseException) ex).getStatusCode() == 413) {
+                         ex.getMessage().contains("Records size exceeds 4 MB limit")) {
 
                     LOGGER.error(errorMsg +
                             "Batch of records too large. Please try to reduce your batch size by passing " +
@@ -306,7 +304,7 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
         }
     }
 
-    private void submitBatchWithRetry(final Queue<Record> records) throws AmazonKinesisFirehoseException,
+    private void submitBatchWithRetry(final Collection<Record> records) throws AmazonKinesisFirehoseException,
             RecordCouldNotBeSentException {
 
         PutRecordBatchResult lastResult;
@@ -318,7 +316,6 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
                 lastResult = submitBatch(records);
 
                 if (lastResult.getFailedPutCount() == null || lastResult.getFailedPutCount() == 0) {
-
                     lastSucceededFlushTimestamp = System.nanoTime();
                     LOGGER.debug("Firehose Buffer has been flushed with size: {} on attempt: {}",
                             records.size(), attempts);
@@ -350,7 +347,15 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
             } catch (InterruptedException e) {
                 LOGGER.info("An interrupted exception has been thrown between retry attempts.", e);
             } catch (AmazonKinesisFirehoseException ex) {
-                throw ex;
+                if (ex.getMessage().contains("Records size exceeds 4 MB limit")) {
+                    // Send exceeded 4MB limit. Halve and try again.
+                    ArrayList<Record> recordLst = new ArrayList<>();
+                    recordLst.addAll(records);
+                    submitBatchWithRetry(recordLst.subList(0, recordLst.size() / 2));
+                    submitBatchWithRetry(recordLst.subList(recordLst.size() / 2, recordLst.size()));
+                } else {
+                    throw ex;
+                }
             }
         }
 
@@ -362,7 +367,7 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
      * @param records a Collection of records
      * @return {@code PutRecordBatchResult}
      */
-    private PutRecordBatchResult submitBatch(final Queue<Record> records) throws AmazonKinesisFirehoseException {
+    private PutRecordBatchResult submitBatch(final Collection<Record> records) throws AmazonKinesisFirehoseException {
 
         LOGGER.debug("Sending {} records to Kinesis Firehose on stream: {}", records.size(),
                 deliveryStream);

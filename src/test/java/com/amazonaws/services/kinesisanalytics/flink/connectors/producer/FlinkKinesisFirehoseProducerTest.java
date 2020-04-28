@@ -6,6 +6,7 @@ import com.amazonaws.services.kinesisanalytics.flink.connectors.serialization.Ki
 import com.amazonaws.services.kinesisfirehose.AmazonKinesisFirehose;
 import com.amazonaws.services.kinesisfirehose.model.Record;
 import com.google.common.util.concurrent.SettableFuture;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.flink.api.common.serialization.SerializationSchema;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.runtime.state.FunctionSnapshotContext;
@@ -17,6 +18,7 @@ import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
 
+import java.nio.ByteBuffer;
 import java.util.Properties;
 
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants.CredentialProviderType;
@@ -211,6 +213,26 @@ public class FlinkKinesisFirehoseProducerTest {
 
         flinkKinesisFirehoseProducer.open(properties);
         flinkKinesisFirehoseProducer.invoke("Test", context);
+        flinkKinesisFirehoseProducer.close();
+
+        verify(firehoseProducer, times(1)).flush();
+    }
+
+    @Test
+    public void testFlinkKinesisFirehoseProducerFlushesByteLimit() throws Exception {
+        // Firehose limit is 4MB
+        String longRecord = StringUtils.repeat("*", (int) 5e6);
+        when(firehoseProducer.addUserRecord(new Record().withData(ByteBuffer.wrap(longRecord.getBytes()))))
+        // when(firehoseProducer.addUserRecord(any(Record.class)))
+                .thenReturn(getUserRecordResult(false, true));
+
+        doNothing().when(firehoseProducer).flush();
+
+        when(firehoseProducer.getOutstandingRecordsCount()).thenReturn(1).thenReturn(0);
+        when(firehoseProducer.isFlushFailed()).thenReturn(false);
+
+        flinkKinesisFirehoseProducer.open(properties);
+        flinkKinesisFirehoseProducer.invoke(longRecord, context);
         flinkKinesisFirehoseProducer.close();
 
         verify(firehoseProducer, times(1)).flush();
