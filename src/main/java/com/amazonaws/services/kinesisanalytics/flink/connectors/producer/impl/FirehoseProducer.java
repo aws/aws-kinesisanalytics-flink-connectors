@@ -266,9 +266,8 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
              * any changes to the object and the producer thread does not make any modifications to the flusherBuffer.
              * The only agent making changes to flusherBuffer is the flusher thread. */
             try {
-                if (submitBatchWithRetry(flusherBuffer)) {
-                    lastSucceededFlushTimestamp = System.nanoTime();
-                };
+                submitBatchWithRetry(flusherBuffer);
+                lastSucceededFlushTimestamp = System.nanoTime();
 
                 Queue<Record> emptyFlushBuffer = new ArrayDeque<>(maxBufferSize);
                 synchronized (producerBufferLock) {
@@ -297,7 +296,7 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
     }
 
     // returns whether or not all provided Records could be sent to Firehose
-    private boolean submitBatchWithRetry(final Collection<Record> records) throws AmazonKinesisFirehoseException,
+    private void submitBatchWithRetry(final Collection<Record> records) throws AmazonKinesisFirehoseException,
             RecordCouldNotBeSentException {
 
         PutRecordBatchResult lastResult;
@@ -311,7 +310,7 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
                 if (lastResult.getFailedPutCount() == null || lastResult.getFailedPutCount() == 0) {
                     LOGGER.debug("Firehose Buffer has been flushed with size: {} on attempt: {}",
                             records.size(), attempts);
-                    return true;
+                    return;
                 }
 
                 PutRecordBatchResponseEntry failedRecord = lastResult.getRequestResponses()
@@ -346,9 +345,9 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
                         throw new RecordCouldNotBeSentException("Failed to flush individual record. Record size exceeded Firehose limit. Ensure you are not creating records whose size exceeds the Firehose limit");
                     }
                     ArrayList<Record> recordLst = new ArrayList<>(records);
-                    boolean fstFlushed = submitBatchWithRetry(recordLst.subList(0, recordLst.size() / 2));
-                    boolean sndFlushed = submitBatchWithRetry(recordLst.subList(recordLst.size() / 2, recordLst.size()));
-                    return fstFlushed && sndFlushed;
+                    submitBatchWithRetry(recordLst.subList(0, recordLst.size() / 2));
+                    submitBatchWithRetry(recordLst.subList(recordLst.size() / 2, recordLst.size()));
+                    return;
                 } else {
                     throw ex;
                 }
