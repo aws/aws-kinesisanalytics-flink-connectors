@@ -295,7 +295,6 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
         }
     }
 
-    // returns whether or not all provided Records could be sent to Firehose
     private void submitBatchWithRetry(final Collection<Record> records) throws AmazonKinesisFirehoseException,
             RecordCouldNotBeSentException {
 
