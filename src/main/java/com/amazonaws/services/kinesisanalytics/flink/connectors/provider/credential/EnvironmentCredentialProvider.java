@@ -26,8 +26,12 @@ import java.util.Properties;
 public class EnvironmentCredentialProvider extends CredentialProvider {
 
 
-    public EnvironmentCredentialProvider(Properties properties) {
-        super(properties);
+    public EnvironmentCredentialProvider(final Properties properties, final String providerKey) {
+        super(properties, providerKey);
+    }
+
+    public EnvironmentCredentialProvider(final Properties properties) {
+        this(properties, null);
     }
 
     @Override

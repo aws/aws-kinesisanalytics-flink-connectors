@@ -21,23 +21,30 @@ package com.amazonaws.services.kinesisanalytics.flink.connectors.provider.creden
 import com.amazonaws.auth.AWSCredentialsProvider;
 import com.amazonaws.auth.profile.ProfileCredentialsProvider;
 import com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants;
-import com.amazonaws.services.kinesisanalytics.flink.connectors.util.AWSUtil;
+import org.apache.commons.lang3.StringUtils;
 
 import java.util.Properties;
+
+import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants.AWS_CREDENTIALS_PROVIDER;
+import static com.amazonaws.services.kinesisanalytics.flink.connectors.util.AWSUtil.validateProfileProviderConfiguration;
 
 public class ProfileCredentialProvider extends CredentialProvider {
 
 
-    public ProfileCredentialProvider(Properties properties) {
-        super(AWSUtil.validateProfileProviderConfiguration(properties));
+    public ProfileCredentialProvider(final Properties properties, final String providerKey) {
+        super(validateProfileProviderConfiguration(properties, providerKey), providerKey);
+    }
+
+    public ProfileCredentialProvider(final Properties properties) {
+        this(properties, AWS_CREDENTIALS_PROVIDER);
     }
 
     @Override
     public AWSCredentialsProvider getAwsCredentialsProvider() {
-        final String profileName = getProperties().getProperty(AWSConfigConstants.AWS_PROFILE_NAME);
-        final String profilePath = getProperties().getProperty(AWSConfigConstants.AWS_PROFILE_PATH, null);
+        final String profileName = properties.getProperty(AWSConfigConstants.profileName(providerKey));
+        final String profilePath = properties.getProperty(AWSConfigConstants.profilePath(providerKey));
 
-        return (profilePath == null) ? new ProfileCredentialsProvider(profileName) :
+        return StringUtils.isEmpty(profilePath) ? new ProfileCredentialsProvider(profileName) :
             new ProfileCredentialsProvider(profileName, profilePath);
     }
 }

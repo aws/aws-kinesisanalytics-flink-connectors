@@ -21,25 +21,27 @@ package com.amazonaws.services.kinesisanalytics.flink.connectors.provider.creden
 import com.amazonaws.auth.AWSCredentials;
 import com.amazonaws.auth.AWSCredentialsProvider;
 import com.amazonaws.auth.BasicAWSCredentials;
-import com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants;
 
 import java.util.Properties;
 
+import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants.accessKeyId;
+import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants.secretKey;
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.util.AWSUtil.validateBasicProviderConfiguration;
 
 public class BasicCredentialProvider extends CredentialProvider {
 
-    public BasicCredentialProvider(Properties properties) {
-        super(validateBasicProviderConfiguration(properties));
+    public BasicCredentialProvider(final Properties properties, final String providerKey) {
+            super(validateBasicProviderConfiguration(properties, providerKey), providerKey);
     }
+
+    public BasicCredentialProvider(Properties properties) { this(properties, null); }
 
     @Override
     public AWSCredentialsProvider getAwsCredentialsProvider() {
         return new AWSCredentialsProvider() {
             @Override
             public AWSCredentials getCredentials() {
-                return new BasicAWSCredentials(getProperties().getProperty(AWSConfigConstants.AWS_ACCESS_KEY_ID),
-                    getProperties().getProperty(AWSConfigConstants.AWS_SECRET_ACCESS_KEY));
+                return new BasicAWSCredentials(properties.getProperty(accessKeyId(providerKey)), properties.getProperty(secretKey(providerKey)));
             }
 
             @Override

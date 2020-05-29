@@ -26,8 +26,12 @@ import java.util.Properties;
 public class SystemCredentialProvider extends CredentialProvider {
 
 
-    public SystemCredentialProvider(Properties properties) {
-        super(properties);
+    public SystemCredentialProvider(final Properties properties, final String providerKey) {
+        super(properties, providerKey);
+    }
+
+    public SystemCredentialProvider(final Properties properties) {
+        this(properties, null);
     }
 
     @Override

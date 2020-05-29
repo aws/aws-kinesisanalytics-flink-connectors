@@ -26,9 +26,15 @@ import java.util.Properties;
 public abstract class CredentialProvider {
 
     final Properties properties;
+    final String providerKey;
+
+    CredentialProvider(final Properties properties, final String providerKey) {
+        this.properties = AWSUtil.validateConfiguration(properties);
+        this.providerKey = providerKey == null ? "" : providerKey;
+    }
 
     public CredentialProvider(final Properties properties) {
-        this.properties = AWSUtil.validateConfiguration(properties);
+        this(properties, null);
     }
 
     public abstract AWSCredentialsProvider getAwsCredentialsProvider();
@@ -36,4 +42,6 @@ public abstract class CredentialProvider {
     protected Properties getProperties() {
         return this.properties;
     }
+
+    protected String getProviderKey() { return this.providerKey; }
 }
