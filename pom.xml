@@ -21,7 +21,7 @@ under the License.
     <modelVersion>4.0.0</modelVersion>
     <groupId>com.amazonaws</groupId>
     <artifactId>aws-kinesisanalytics-flink</artifactId>
-    <version>1.1.0</version>
+    <version>1.2.0-RC1-SNAPSHOT</version>
     <packaging>jar</packaging>
     <name>AWS Kinesis Analytics Java Flink Connectors</name>
     <description>This library contains various Apache Flink connectors to connect to AWS data sources and sinks.</description>
@@ -51,8 +51,9 @@ under the License.
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <java.version>1.8</java.version>
+        <flink.version>1.8.3</flink.version>
         <scala.binary.version>2.11</scala.binary.version>
+        <java.version>1.8</java.version>
         <maven.compiler.source>${java.version}</maven.compiler.source>
         <maven.compiler.target>${java.version}</maven.compiler.target>
         <artifactrepo.url>https://mvnrepository.com/artifact/com.amazonaws/aws-kinesisanalytics-flink</artifactrepo.url>
