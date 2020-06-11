@@ -53,10 +53,12 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <flink.version>1.8.3</flink.version>
+        <aws-sdk.version>1.11.379</aws-sdk.version>
         <scala.binary.version>2.11</scala.binary.version>
         <java.version>1.8</java.version>
         <maven.compiler.source>${java.version}</maven.compiler.source>
         <maven.compiler.target>${java.version}</maven.compiler.target>
+        <maven-compiler-plugin.version>3.1</maven-compiler-plugin.version>
         <artifactrepo.url>https://mvnrepository.com/artifact/com.amazonaws/aws-kinesisanalytics-flink</artifactrepo.url>
     </properties>
 
@@ -64,12 +66,12 @@
         <dependency>
             <groupId>com.amazonaws</groupId>
             <artifactId>aws-java-sdk-iam</artifactId>
-            <version>1.11.379</version>
+            <version>${aws-sdk.version}</version>
         </dependency>
         <dependency>
             <groupId>com.amazonaws</groupId>
             <artifactId>aws-java-sdk-kinesis</artifactId>
-            <version>1.11.379</version>
+            <version>${aws-sdk.version}</version>
         </dependency>
         <dependency>
             <groupId>com.google.guava</groupId>
@@ -128,7 +130,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.1</version>
+                <version>${maven-compiler-plugin.version}</version>
                 <configuration>
                     <source>${java.version}</source>
                     <target>${java.version}</target>
