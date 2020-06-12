@@ -31,7 +31,7 @@ import static com.amazonaws.services.kinesisanalytics.flink.connectors.util.AWSU
 public class BasicCredentialProvider extends CredentialProvider {
 
     public BasicCredentialProvider(final Properties properties, final String providerKey) {
-            super(validateBasicProviderConfiguration(properties, providerKey), providerKey);
+        super(validateBasicProviderConfiguration(properties, providerKey), providerKey);
     }
 
     public BasicCredentialProvider(Properties properties) { this(properties, null); }

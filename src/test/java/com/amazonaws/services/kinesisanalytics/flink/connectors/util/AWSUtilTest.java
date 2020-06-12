@@ -18,31 +18,38 @@
 
 package com.amazonaws.services.kinesisanalytics.flink.connectors.util;
 
+import com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants;
 import com.amazonaws.services.kinesisanalytics.flink.connectors.provider.credential.BasicCredentialProvider;
 import com.amazonaws.services.kinesisfirehose.AmazonKinesisFirehose;
-import org.testng.Assert;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
+import javax.annotation.Nonnull;
 import java.util.Properties;
 
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants.AWS_ACCESS_KEY_ID;
+import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants.AWS_CREDENTIALS_PROVIDER;
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants.AWS_PROFILE_NAME;
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants.AWS_REGION;
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants.AWS_SECRET_ACCESS_KEY;
+import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants.CredentialProviderType.ASSUME_ROLE;
+import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants.CredentialProviderType.AUTO;
+import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants.CredentialProviderType.BASIC;
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.util.AWSUtil.createKinesisFirehoseClientFromConfiguration;
+import static com.amazonaws.services.kinesisanalytics.flink.connectors.util.AWSUtil.getCredentialProviderType;
+import static com.amazonaws.services.kinesisanalytics.flink.connectors.util.AWSUtil.validateAssumeRoleCredentialsProvider;
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.util.AWSUtil.validateBasicProviderConfiguration;
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.util.AWSUtil.validateConfiguration;
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.util.AWSUtil.validateProfileProviderConfiguration;
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.is;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 
 public class AWSUtilTest {
 
     private Properties configProps;
 
     @BeforeMethod
-    public void init() {
+    public void setUp() {
         configProps = new Properties();
         configProps.setProperty(AWS_ACCESS_KEY_ID, "DUMMY");
         configProps.setProperty(AWS_SECRET_ACCESS_KEY, "DUMMY-SECRET");
@@ -50,85 +57,190 @@ public class AWSUtilTest {
         configProps.setProperty(AWS_REGION, "us-east-1");
     }
 
-
-    @Test(expectedExceptions = NullPointerException.class)
+    @Test
     public void testCreateKinesisFirehoseClientFromConfigurationWithNullConfiguration() {
-        createKinesisFirehoseClientFromConfiguration(null, new BasicCredentialProvider(configProps));
+        assertThatExceptionOfType(NullPointerException.class)
+                .isThrownBy(() -> createKinesisFirehoseClientFromConfiguration(null, new BasicCredentialProvider(configProps)))
+                .withMessageContaining("Configuration properties cannot be null");
     }
 
-    @Test(expectedExceptions = NullPointerException.class)
+    @Test
     public void testCreateKinesisFirehoseClientFromConfigurationWithNullCredentialProvider() {
-        createKinesisFirehoseClientFromConfiguration(configProps, null);
+        assertThatExceptionOfType(NullPointerException.class)
+                .isThrownBy(() -> createKinesisFirehoseClientFromConfiguration(configProps, null))
+                .withMessageContaining("Credential Provider cannot be null");
     }
 
     @Test
     public void testCreateKinesisFirehoseClientFromConfigurationHappyCase() {
-        AmazonKinesisFirehose firehoseClient =  createKinesisFirehoseClientFromConfiguration(configProps,
+        AmazonKinesisFirehose firehoseClient = createKinesisFirehoseClientFromConfiguration(configProps,
             new BasicCredentialProvider(configProps));
-        Assert.assertNotNull(firehoseClient);
-        Assert.assertTrue(firehoseClient instanceof AmazonKinesisFirehose);
+
+        assertThat(firehoseClient).isNotNull();
     }
 
-    @Test(expectedExceptions = NullPointerException.class)
+    @Test
     public void testValidateConfigurationWithNullConfiguration() {
-        validateConfiguration(null);
+        assertThatExceptionOfType(NullPointerException.class)
+                .isThrownBy(() -> validateConfiguration(null))
+                .withMessageContaining("Configuration properties cannot be null");
     }
 
-    @Test(expectedExceptions = IllegalArgumentException.class, expectedExceptionsMessageRegExp =
-        "Either AWS region should be specified or AWS Firehose endpoint and endpoint signing region.*")
+    @Test
     public void testValidateConfigurationWithNoRegionOrFirehoseEndpoint() {
-        Properties config = new Properties();
-        configProps.setProperty(AWS_ACCESS_KEY_ID, "DUMMY");
-        configProps.setProperty(AWS_SECRET_ACCESS_KEY, "DUMMY-SECRET");
-        validateConfiguration(config);
+        assertThatExceptionOfType(IllegalArgumentException.class)
+                .isThrownBy(() -> validateConfiguration(new Properties()))
+                .withMessageContaining("Either AWS region should be specified or AWS Firehose endpoint and endpoint signing region");
     }
 
     @Test
     public void testValidateConfigurationHappyCase() {
         Properties config = validateConfiguration(configProps);
-        assertThat(configProps, is(config));
+        assertThat(configProps).isEqualTo(config);
     }
 
     @Test
     public void testValidateBasicConfigurationHappyCase() {
         Properties config = validateBasicProviderConfiguration(configProps);
-        assertThat(configProps, is(config));
+        assertThat(configProps).isEqualTo(config);
     }
 
-    @Test(expectedExceptions = NullPointerException.class)
+    @Test
     public void testValidateBasicConfigurationWithNullConfiguration() {
-        validateBasicProviderConfiguration(null);
+        assertThatExceptionOfType(NullPointerException.class)
+                .isThrownBy(() -> validateBasicProviderConfiguration(null))
+                .withMessageContaining("Configuration properties cannot be null");
     }
 
-    @Test(expectedExceptions = IllegalArgumentException.class,
-        expectedExceptionsMessageRegExp = "AWS access key must be specified with credential provider BASIC.*")
+    @Test
     public void testValidateBasicConfigurationWithNoAwsAccessKeyId() {
         configProps.remove(AWS_ACCESS_KEY_ID);
-        validateBasicProviderConfiguration(configProps);
+
+        assertThatExceptionOfType(IllegalArgumentException.class)
+                .isThrownBy(() -> validateBasicProviderConfiguration(configProps))
+                .withMessageContaining("AWS access key must be specified with credential provider BASIC");
     }
 
-    @Test(expectedExceptions = IllegalArgumentException.class,
-        expectedExceptionsMessageRegExp = "AWS secret key must be specified with credential provider BASIC.*")
+    @Test
     public void testValidateBasicConfigurationWithNoAwsSecretKeyId() {
         configProps.remove(AWS_SECRET_ACCESS_KEY);
-        validateBasicProviderConfiguration(configProps);
+
+        assertThatExceptionOfType(IllegalArgumentException.class)
+                .isThrownBy(() -> validateBasicProviderConfiguration(configProps))
+                .withMessageContaining("AWS secret key must be specified with credential provider BASIC");
     }
 
-    @Test(expectedExceptions = NullPointerException.class)
+    @Test
     public void testValidateProfileProviderConfigurationWithNullConfiguration() {
-        validateProfileProviderConfiguration(null);
+        assertThatExceptionOfType(NullPointerException.class)
+                .isThrownBy(() -> validateProfileProviderConfiguration(null))
+                .withMessageContaining("Configuration properties cannot be null");
     }
 
     @Test
     public void testValidateProfileProviderConfigurationHappyCase() {
         Properties config = validateProfileProviderConfiguration(configProps);
-        assertThat(configProps, is(config));
+        assertThat(configProps).isEqualTo(config);
     }
 
-    @Test(expectedExceptions = IllegalArgumentException.class,
-    expectedExceptionsMessageRegExp = "AWS profile name should be specified with credential provider PROFILE.*")
+    @Test
     public void testValidateProfileProviderConfigurationWithNoProfileName() {
         configProps.remove(AWS_PROFILE_NAME);
-        validateProfileProviderConfiguration(configProps);
+
+        assertThatExceptionOfType(IllegalArgumentException.class)
+                .isThrownBy(() -> validateProfileProviderConfiguration(configProps))
+                .withMessageContaining("AWS profile name should be specified with credential provider PROFILE");
+    }
+
+    @Test
+    public void testValidateAssumeRoleProviderConfigurationHappyCase() {
+        Properties properties = buildAssumeRoleProperties();
+        assertThat(validateAssumeRoleCredentialsProvider(properties)).isEqualTo(properties);
+    }
+
+    @Test
+    public void testValidateAssumeRoleProviderConfigurationWithNoRoleArn() {
+        Properties properties = buildAssumeRoleProperties();
+        properties.remove(AWSConfigConstants.roleArn(AWS_CREDENTIALS_PROVIDER));
+
+        assertThatExceptionOfType(IllegalArgumentException.class)
+                .isThrownBy(() -> validateAssumeRoleCredentialsProvider(properties))
+                .withMessageContaining("AWS role arn to be assumed must be provided with credential provider type ASSUME_ROLE");
+    }
+
+    @Test
+    public void testValidateAssumeRoleProviderConfigurationWithNoRoleSessionName() {
+        Properties properties = buildAssumeRoleProperties();
+        properties.remove(AWSConfigConstants.roleSessionName(AWS_CREDENTIALS_PROVIDER));
+
+        assertThatExceptionOfType(IllegalArgumentException.class)
+                .isThrownBy(() -> validateAssumeRoleCredentialsProvider(properties))
+                .withMessageContaining("AWS role session name must be provided with credential provider type ASSUME_ROLE");
+    }
+
+    @Test
+    public void testValidateAssumeRoleProviderConfigurationWithNullConfiguration() {
+        assertThatExceptionOfType(NullPointerException.class)
+                .isThrownBy(() -> validateAssumeRoleCredentialsProvider(null))
+                .withMessageContaining("Configuration properties cannot be null");
+    }
+
+    @Nonnull
+    private Properties buildAssumeRoleProperties() {
+        Properties properties = new Properties();
+        properties.putAll(configProps);
+        properties.put(AWSConfigConstants.roleArn(AWS_CREDENTIALS_PROVIDER), "arn-1234567812345678");
+        properties.put(AWSConfigConstants.roleSessionName(AWS_CREDENTIALS_PROVIDER), "session-name");
+        return properties;
+    }
+
+    @Test
+    public void testGetCredentialProviderTypeIsAutoNullProviderKey() {
+        assertThat(getCredentialProviderType(new Properties(), null)).isEqualTo(AUTO);
+    }
+
+    @Test
+    public void testGetCredentialProviderTypeIsAutoWithProviderKeyMismatch() {
+        assertThat(getCredentialProviderType(configProps, "missing-key")).isEqualTo(AUTO);
+    }
+
+    @Test
+    public void testGetCredentialProviderTypeIsAutoMissingAccessKey() {
+        configProps.remove(AWS_ACCESS_KEY_ID);
+
+        assertThat(getCredentialProviderType(configProps, null)).isEqualTo(AUTO);
+    }
+
+    @Test
+    public void testGetCredentialProviderTypeIsAutoMissingSecretKey() {
+        configProps.remove(AWS_SECRET_ACCESS_KEY);
+
+        assertThat(getCredentialProviderType(configProps, null)).isEqualTo(AUTO);
+    }
+
+    @Test
+    public void testGetCredentialProviderTypeIsBasic() {
+        assertThat(getCredentialProviderType(configProps, null)).isEqualTo(BASIC);
+    }
+
+    @Test
+    public void testGetCredentialProviderTypeIsAutoWithEmptyProviderKey() {
+        configProps.setProperty("key", "");
+
+        assertThat(getCredentialProviderType(configProps, "key")).isEqualTo(AUTO);
+    }
+
+    @Test
+    public void testGetCredentialProviderTypeIsAutoWithBadConfiguration() {
+        configProps.setProperty("key", "Bad");
+
+        assertThat(getCredentialProviderType(configProps, "key")).isEqualTo(AUTO);
+    }
+
+    @Test
+    public void testGetCredentialProviderTypeIsParsedFromProviderKey() {
+        configProps.setProperty("key", "ASSUME_ROLE");
+
+        assertThat(getCredentialProviderType(configProps, "key")).isEqualTo(ASSUME_ROLE);
     }
 }

@@ -28,6 +28,7 @@ import com.amazonaws.services.kinesisfirehose.AmazonKinesisFirehoseClientBuilder
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Validate;
 
+import javax.annotation.Nonnull;
 import java.util.Properties;
 
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants.AWS_CREDENTIALS_PROVIDER;
@@ -46,8 +47,8 @@ public final class AWSUtil {
 
     }
 
-    public static AmazonKinesisFirehose createKinesisFirehoseClientFromConfiguration(final Properties configProps,
-                                                                                     final CredentialProvider credentialsProvider) {
+    public static AmazonKinesisFirehose createKinesisFirehoseClientFromConfiguration(@Nonnull final Properties configProps,
+                                                                                     @Nonnull final CredentialProvider credentialsProvider) {
         validateConfiguration(configProps);
         Validate.notNull(credentialsProvider, "Credential Provider cannot be null.");
 
@@ -117,7 +118,7 @@ public final class AWSUtil {
 
         try {
             return AWSConfigConstants.CredentialProviderType.valueOf(providerTypeString);
-        } catch (InvalidArgumentException e) {
+        } catch (IllegalArgumentException e) {
             return AWSConfigConstants.CredentialProviderType.AUTO;
         }
     }

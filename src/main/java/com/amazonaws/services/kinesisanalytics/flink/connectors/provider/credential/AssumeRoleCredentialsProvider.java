@@ -24,7 +24,9 @@ import com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfig
 import com.amazonaws.services.kinesisanalytics.flink.connectors.provider.credential.factory.CredentialProviderFactory;
 import com.amazonaws.services.securitytoken.AWSSecurityTokenService;
 import com.amazonaws.services.securitytoken.AWSSecurityTokenServiceClientBuilder;
+import com.google.common.annotations.VisibleForTesting;
 
+import javax.annotation.Nonnull;
 import java.util.Properties;
 
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants.AWS_CREDENTIALS_PROVIDER;
@@ -37,7 +39,9 @@ public class AssumeRoleCredentialsProvider extends CredentialProvider {
         super(validateAssumeRoleCredentialsProvider(properties, providerKey), providerKey);
     }
 
-    public AssumeRoleCredentialsProvider(final Properties properties) { this(properties, AWS_CREDENTIALS_PROVIDER); }
+    public AssumeRoleCredentialsProvider(final Properties properties) {
+        this(properties, AWS_CREDENTIALS_PROVIDER);
+    }
 
     @Override
     public AWSCredentialsProvider getAwsCredentialsProvider() {
@@ -49,11 +53,22 @@ public class AssumeRoleCredentialsProvider extends CredentialProvider {
                 .withCredentials(baseCredentialsProvider.getAwsCredentialsProvider())
                 .withRegion(properties.getProperty(AWSConfigConstants.AWS_REGION))
                 .build();
-        return new STSAssumeRoleSessionCredentialsProvider.Builder(
+
+        return createAwsCredentialsProvider(
                 properties.getProperty(AWSConfigConstants.roleArn(providerKey)),
-                properties.getProperty(AWSConfigConstants.roleSessionName(providerKey)))
-                .withExternalId(properties.getProperty(AWSConfigConstants.externalId(providerKey)))
-                .withStsClient(baseCredentials)
+                properties.getProperty(AWSConfigConstants.roleSessionName(providerKey)),
+                properties.getProperty(AWSConfigConstants.externalId(providerKey)),
+                baseCredentials);
+    }
+
+    @VisibleForTesting
+    AWSCredentialsProvider createAwsCredentialsProvider(@Nonnull String roleArn,
+                                                        @Nonnull String roleSessionName,
+                                                        @Nonnull String externalId,
+                                                        @Nonnull AWSSecurityTokenService securityTokenService) {
+        return new STSAssumeRoleSessionCredentialsProvider.Builder(roleArn, roleSessionName)
+                .withExternalId(externalId)
+                .withStsClient(securityTokenService)
                 .build();
     }
 }

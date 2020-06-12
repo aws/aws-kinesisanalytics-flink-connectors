@@ -19,6 +19,10 @@
 package com.amazonaws.services.kinesisanalytics.flink.connectors.config;
 
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Validate;
+
+import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 
 /**
  * AWS Kinesis Firehose configuration constants
@@ -46,7 +50,6 @@ public class AWSConfigConstants {
          * ENV_VARIABLES, SYS_PROPERTIES, PROFILE in the AWS instance metadata. **/
         AUTO
     }
-
 
     /** The AWS access key for provider type basic */
     public static final String AWS_ACCESS_KEY_ID = "aws_access_key_id";
@@ -90,34 +93,63 @@ public class AWSConfigConstants {
      */
     public static final String AWS_ROLE_CREDENTIALS_PROVIDER = roleCredentialsProvider(AWS_CREDENTIALS_PROVIDER);
 
-    public static String accessKeyId(String prefix) {
+    private AWSConfigConstants() {
+        // Prevent instantiation
+    }
+
+    @Nonnull
+    public static String accessKeyId(@Nullable String prefix) {
         return (!StringUtils.isEmpty(prefix) ? prefix + ".basic." : "") + AWS_ACCESS_KEY_ID;
     }
 
-    public static String secretKey(String prefix) {
-        return (!StringUtils.isEmpty(prefix) ? prefix + ".basic." : "") + AWS_SECRET_ACCESS_KEY; }
+    @Nonnull
+    public static String accessKeyId() {
+        return accessKeyId(null);
+    }
 
-    public static String profilePath(String prefix) {
+    @Nonnull
+    public static String secretKey(@Nullable String prefix) {
+        return (!StringUtils.isEmpty(prefix) ? prefix + ".basic." : "") + AWS_SECRET_ACCESS_KEY;
+    }
+
+    @Nonnull
+    public static String secretKey() {
+        return secretKey(null);
+    }
+
+    @Nonnull
+    public static String profilePath(@Nonnull String prefix) {
+        Validate.notBlank(prefix);
         return prefix + ".profile.path";
     }
 
-    public static String profileName(String prefix) {
+    @Nonnull
+    public static String profileName(@Nonnull String prefix) {
+        Validate.notBlank(prefix);
         return prefix + ".profile.name";
     }
 
-    public static String roleArn(String prefix) {
+    @Nonnull
+    public static String roleArn(@Nonnull String prefix) {
+        Validate.notBlank(prefix);
         return prefix + ".role.arn";
     }
 
-    public static String roleSessionName(String prefix) {
+    @Nonnull
+    public static String roleSessionName(@Nonnull String prefix) {
+        Validate.notBlank(prefix);
         return prefix + ".role.sessionName";
     }
 
-    public static String externalId(String prefix) {
+    @Nonnull
+    public static String externalId(@Nonnull String prefix) {
+        Validate.notBlank(prefix);
         return prefix + ".role.externalId";
     }
 
-    public static String roleCredentialsProvider(String prefix) {
+    @Nonnull
+    public static String roleCredentialsProvider(@Nonnull String prefix) {
+        Validate.notBlank(prefix);
         return prefix + ".role.provider";
     }
 }
