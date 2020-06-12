@@ -71,7 +71,7 @@ public final class CredentialProviderFactory {
     }
 
     public static CredentialProvider newCredentialProvider(final CredentialProviderType credentialProviderType,
-                                                    final Properties awsConfigProps) {
+                                                           final Properties awsConfigProps) {
         return newCredentialProvider(credentialProviderType, awsConfigProps, AWS_CREDENTIALS_PROVIDER);
     }
 }

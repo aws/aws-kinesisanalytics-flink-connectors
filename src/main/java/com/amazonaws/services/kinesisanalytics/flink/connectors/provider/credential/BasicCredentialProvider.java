@@ -34,7 +34,9 @@ public class BasicCredentialProvider extends CredentialProvider {
         super(validateBasicProviderConfiguration(properties, providerKey), providerKey);
     }
 
-    public BasicCredentialProvider(Properties properties) { this(properties, null); }
+    public BasicCredentialProvider(Properties properties) {
+        this(properties, null);
+    }
 
     @Override
     public AWSCredentialsProvider getAwsCredentialsProvider() {

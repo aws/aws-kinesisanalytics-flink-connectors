@@ -43,5 +43,7 @@ public abstract class CredentialProvider {
         return this.properties;
     }
 
-    protected String getProviderKey() { return this.providerKey; }
+    protected String getProviderKey() {
+        return this.providerKey;
+    }
 }
