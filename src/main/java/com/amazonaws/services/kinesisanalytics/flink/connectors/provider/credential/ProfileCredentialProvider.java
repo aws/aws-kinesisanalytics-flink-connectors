@@ -38,6 +38,6 @@ public class ProfileCredentialProvider extends CredentialProvider {
         final String profilePath = getProperties().getProperty(AWSConfigConstants.AWS_PROFILE_PATH, null);
 
         return (profilePath == null) ? new ProfileCredentialsProvider(profileName) :
-            new ProfileCredentialsProvider(profileName, profilePath);
+            new ProfileCredentialsProvider(profilePath, profileName);
     }
 }
