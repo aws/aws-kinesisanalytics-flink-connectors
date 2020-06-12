@@ -65,6 +65,7 @@
         <mockito.version>3.3.3</mockito.version>
         <jacoco.version>0.8.5</jacoco.version>
         <logback.version>1.2.3</logback.version>
+        <maven-shade-plugin.version>3.2.4</maven-shade-plugin.version>
         <artifactrepo.url>https://mvnrepository.com/artifact/com.amazonaws/aws-kinesisanalytics-flink</artifactrepo.url>
     </properties>
 
@@ -163,6 +164,53 @@
                         <goals>
                             <goal>report</goal>
                         </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>${maven-shade-plugin.version}</version>
+                <executions>
+                    <execution>
+                        <id>shade</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <promoteTransitiveDependencies>true</promoteTransitiveDependencies>
+                            <artifactSet combine.children="append">
+                                <includes>
+                                    <include>com.amazonaws:*</include>
+                                    <include>org.apache.httpcomponents:*</include>
+                                </includes>
+                            </artifactSet>
+                            <relocations combine.children="override">
+                                <relocation>
+                                    <pattern>com.amazonaws</pattern>
+                                    <shadedPattern>com.amazonaws.services.kinesisanalytics.shaded.com.amazonaws</shadedPattern>
+                                    <excludes>
+                                        <!-- Do not shade the source files of this project!  -->
+                                        <exclude>com.amazonaws.services.kinesisanalytics.flink.connectors.**</exclude>
+                                    </excludes>
+                                </relocation>
+                                <relocation>
+                                    <pattern>org.apache.http</pattern>
+                                    <shadedPattern>com.amazonaws.services.kinesisanalytics.shaded.org.apache.http</shadedPattern>
+                                </relocation>
+                            </relocations>
+                            <filters>
+                                <!-- Stops pulling in LICENSE, DEPENDENCY, etc files from shaded dependencies -->
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/**</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                        </configuration>
                     </execution>
                 </executions>
             </plugin>
