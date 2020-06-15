@@ -22,6 +22,7 @@ import com.amazonaws.auth.STSAssumeRoleSessionCredentialsProvider;
 import com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants;
 import org.testng.annotations.Test;
 
+import javax.annotation.Nonnull;
 import java.util.Properties;
 
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants.AWS_CREDENTIALS_PROVIDER;
@@ -37,19 +38,38 @@ import static org.mockito.Mockito.verify;
 public class AssumeRoleCredentialsProviderTest {
 
     @Test
-    public void testGetAwsCredentialsProvider() {
-        Properties properties = new Properties();
-        properties.put(AWSConfigConstants.AWS_REGION, "eu-west-2");
-        properties.put(AWSConfigConstants.roleArn(AWS_CREDENTIALS_PROVIDER), "arn-1234567812345678");
-        properties.put(AWSConfigConstants.roleSessionName(AWS_CREDENTIALS_PROVIDER), "session-name");
-        properties.put(AWSConfigConstants.externalId(AWS_CREDENTIALS_PROVIDER), "external-id");
+    public void testGetAwsCredentialsProviderWithDefaultPrefix() {
+        Properties properties = createAssumeRoleProperties(AWS_CREDENTIALS_PROVIDER);
+        AssumeRoleCredentialsProvider credentialsProvider = new AssumeRoleCredentialsProvider(properties);
 
+        assertGetAwsCredentialsProvider(credentialsProvider);
+    }
+
+    @Test
+    public void testGetAwsCredentialsProviderWithCustomPrefix() {
+        Properties properties = createAssumeRoleProperties("prefix");
+        AssumeRoleCredentialsProvider credentialsProvider = new AssumeRoleCredentialsProvider(properties, "prefix");
+
+        assertGetAwsCredentialsProvider(credentialsProvider);
+    }
+
+    private void assertGetAwsCredentialsProvider(@Nonnull final AssumeRoleCredentialsProvider credentialsProvider) {
         STSAssumeRoleSessionCredentialsProvider expected = mock(STSAssumeRoleSessionCredentialsProvider.class);
 
-        AssumeRoleCredentialsProvider provider = spy(new AssumeRoleCredentialsProvider(properties));
+        AssumeRoleCredentialsProvider provider = spy(credentialsProvider);
         doReturn(expected).when(provider).createAwsCredentialsProvider(any(), anyString(), anyString(), any());
 
         assertThat(provider.getAwsCredentialsProvider()).isEqualTo(expected);
         verify(provider).createAwsCredentialsProvider(eq("arn-1234567812345678"), eq("session-name"), eq("external-id"), any());
+    }
+
+    @Nonnull
+    private Properties createAssumeRoleProperties(@Nonnull final String prefix) {
+        Properties properties = new Properties();
+        properties.put(AWSConfigConstants.AWS_REGION, "eu-west-2");
+        properties.put(AWSConfigConstants.roleArn(prefix), "arn-1234567812345678");
+        properties.put(AWSConfigConstants.roleSessionName(prefix), "session-name");
+        properties.put(AWSConfigConstants.externalId(prefix), "external-id");
+        return properties;
     }
 }
