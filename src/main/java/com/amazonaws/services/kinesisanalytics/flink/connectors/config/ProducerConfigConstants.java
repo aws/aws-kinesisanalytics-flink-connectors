@@ -61,4 +61,8 @@ public class ProducerConfigConstants {
     public static final String FIREHOSE_PRODUCER_BUFFER_MAX_BACKOFF_TIMEOUT = "firehose.producer.buffer.max.backoff";
     public static final String FIREHOSE_PRODUCER_BUFFER_BASE_BACKOFF_TIMEOUT = "firehose.producer.buffer.base.backoff";
     public static final String FIREHOSE_PRODUCER_MAX_OPERATION_TIMEOUT = "firehose.producer.operation.timeout";
+
+    private ProducerConfigConstants() {
+        // Prevent instantiation
+    }
 }

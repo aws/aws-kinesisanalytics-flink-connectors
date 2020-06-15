@@ -46,9 +46,10 @@ import javax.annotation.Nullable;
 import java.nio.ByteBuffer;
 import java.util.Properties;
 
+import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants.AWS_CREDENTIALS_PROVIDER;
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants.CredentialProviderType;
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.producer.impl.FirehoseProducer.UserRecordResult;
-import static com.amazonaws.services.kinesisanalytics.flink.connectors.util.AWSUtil.containsBasicProperties;
+import static com.amazonaws.services.kinesisanalytics.flink.connectors.util.AWSUtil.getCredentialProviderType;
 
 public class FlinkKinesisFirehoseProducer<OUT> extends RichSinkFunction<OUT> implements CheckpointedFunction {
     private static final Logger LOGGER = LoggerFactory.getLogger(FlinkKinesisFirehoseProducer.class);
@@ -108,12 +109,12 @@ public class FlinkKinesisFirehoseProducer<OUT> extends RichSinkFunction<OUT> imp
 
     public FlinkKinesisFirehoseProducer(final String deliveryStream, final KinesisFirehoseSerializationSchema<OUT> schema,
                                         final Properties configProps) {
-        this(deliveryStream, schema, configProps, getCredentialProviderType(configProps));
+        this(deliveryStream, schema, configProps, getCredentialProviderType(configProps, AWS_CREDENTIALS_PROVIDER));
     }
 
     public FlinkKinesisFirehoseProducer(final String deliveryStream, final SerializationSchema<OUT> schema,
                                         final Properties configProps) {
-        this(deliveryStream, schema, configProps, getCredentialProviderType(configProps));
+        this(deliveryStream, schema, configProps, getCredentialProviderType(configProps, AWS_CREDENTIALS_PROVIDER));
     }
 
     @VisibleForTesting
@@ -226,11 +227,6 @@ public class FlinkKinesisFirehoseProducer<OUT> extends RichSinkFunction<OUT> imp
                 firehoseClient.shutdown();
             }
         }
-    }
-
-    private static CredentialProviderType getCredentialProviderType(final Properties configProps) {
-        return (containsBasicProperties(configProps) ?
-                CredentialProviderType.BASIC : CredentialProviderType.AUTO);
     }
 
     private void propagateAsyncExceptions() throws Exception {

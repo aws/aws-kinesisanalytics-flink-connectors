@@ -25,8 +25,12 @@ import java.util.Properties;
 
 public class DefaultCredentialProvider extends CredentialProvider {
 
-    public DefaultCredentialProvider(Properties properties) {
-        super(properties);
+    public DefaultCredentialProvider(final Properties properties, final String providerKey) {
+        super(properties, providerKey);
+    }
+
+    public DefaultCredentialProvider(final Properties properties) {
+        this(properties, null);
     }
 
     @Override

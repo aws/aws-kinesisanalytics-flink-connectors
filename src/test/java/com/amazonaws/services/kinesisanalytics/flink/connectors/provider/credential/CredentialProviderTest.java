@@ -18,24 +18,26 @@
 
 package com.amazonaws.services.kinesisanalytics.flink.connectors.provider.credential;
 
-import com.amazonaws.auth.AWSCredentialsProvider;
-import com.amazonaws.auth.EnvironmentVariableCredentialsProvider;
+import com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants;
+import org.testng.annotations.Test;
 
 import java.util.Properties;
 
-public class EnvironmentCredentialProvider extends CredentialProvider {
+import static org.assertj.core.api.Assertions.assertThat;
 
+public class CredentialProviderTest {
 
-    public EnvironmentCredentialProvider(final Properties properties, final String providerKey) {
-        super(properties, providerKey);
-    }
+    @Test
+    public void testGetProperties() {
+        String key = "key";
+        Properties properties = new Properties();
+        properties.put(AWSConfigConstants.accessKeyId(key), "ACCESS");
+        properties.put(AWSConfigConstants.secretKey(key), "SECRET");
+        properties.put(AWSConfigConstants.AWS_REGION, "eu-west-2");
 
-    public EnvironmentCredentialProvider(final Properties properties) {
-        this(properties, null);
-    }
+        CredentialProvider provider = new BasicCredentialProvider(properties, key);
 
-    @Override
-    public AWSCredentialsProvider getAwsCredentialsProvider() {
-        return new EnvironmentVariableCredentialsProvider();
+        assertThat(provider.getProperties()).isEqualTo(properties);
+        assertThat(provider.getProviderKey()).isEqualTo(key);
     }
 }

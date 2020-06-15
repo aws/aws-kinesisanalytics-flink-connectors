@@ -18,30 +18,33 @@
 
 package com.amazonaws.services.kinesisanalytics.flink.connectors.provider.credential;
 
+import com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
 import java.util.Properties;
 
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants.AWS_ACCESS_KEY_ID;
+import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants.AWS_CREDENTIALS_PROVIDER;
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants.AWS_PROFILE_NAME;
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants.AWS_REGION;
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants.AWS_SECRET_ACCESS_KEY;
+import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants.CredentialProviderType.ASSUME_ROLE;
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants.CredentialProviderType.AUTO;
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants.CredentialProviderType.BASIC;
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants.CredentialProviderType.ENV_VARIABLES;
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants.CredentialProviderType.PROFILE;
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants.CredentialProviderType.SYS_PROPERTIES;
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.provider.credential.factory.CredentialProviderFactory.newCredentialProvider;
-import static org.testng.Assert.assertNotNull;
-import static org.testng.Assert.assertTrue;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 
 public class CredentialProviderFactoryTest {
 
     private Properties configProps;
 
     @BeforeMethod
-    public void init() {
+    public void setUp() {
         configProps = new Properties();
         configProps.setProperty(AWS_REGION, "us-west-2");
     }
@@ -51,55 +54,74 @@ public class CredentialProviderFactoryTest {
         configProps.setProperty(AWS_ACCESS_KEY_ID, "accessKeyId");
         configProps.setProperty(AWS_SECRET_ACCESS_KEY, "secretAccessKey");
         CredentialProvider credentialProvider = newCredentialProvider(BASIC, configProps);
-        assertNotNull(credentialProvider);
-        assertTrue(credentialProvider instanceof BasicCredentialProvider);
+        assertThat(credentialProvider).isInstanceOf(BasicCredentialProvider.class);
     }
 
-    @Test(expectedExceptions = IllegalArgumentException.class,
-        expectedExceptionsMessageRegExp ="AWS access key must be specified with credential provider BASIC.*")
+    @Test
+    public void testBasicCredentialProviderWithNullProviderKey() {
+        configProps.setProperty(AWS_ACCESS_KEY_ID, "accessKeyId");
+        configProps.setProperty(AWS_SECRET_ACCESS_KEY, "secretAccessKey");
+        CredentialProvider credentialProvider = newCredentialProvider(BASIC, configProps, null);
+        assertThat(credentialProvider).isInstanceOf(BasicCredentialProvider.class);
+    }
+
+    @Test
     public void testBasicCredentialProviderInvalidConfigurationProperties() {
-        newCredentialProvider(BASIC, configProps);
+        assertThatExceptionOfType(IllegalArgumentException.class)
+                .isThrownBy(() -> newCredentialProvider(BASIC, configProps))
+                .withMessageContaining("AWS access key must be specified with credential provider BASIC.");
     }
 
     @Test
     public void testProfileCredentialProviderHappyCase() {
         configProps.setProperty(AWS_PROFILE_NAME, "TEST");
         CredentialProvider credentialProvider = newCredentialProvider(PROFILE, configProps);
-        assertNotNull(credentialProvider);
-        assertTrue(credentialProvider instanceof ProfileCredentialProvider);
+        assertThat(credentialProvider).isInstanceOf(ProfileCredentialProvider.class);
     }
 
-    @Test(expectedExceptions = IllegalArgumentException.class,
-        expectedExceptionsMessageRegExp = "AWS profile name should be specified with credential provider PROFILE.*")
+    @Test
     public void testProfileCredentialProviderInvalidConfigurationProperties() {
-        newCredentialProvider(PROFILE, configProps);
+        assertThatExceptionOfType(IllegalArgumentException.class)
+                .isThrownBy(() -> newCredentialProvider(PROFILE, configProps))
+                .withMessageContaining("AWS profile name should be specified with credential provider PROFILE.");
     }
 
     @Test
     public void testEnvironmentCredentialProviderHappyCase() {
         CredentialProvider credentialProvider = newCredentialProvider(ENV_VARIABLES, configProps);
-        assertNotNull(credentialProvider);
-        assertTrue(credentialProvider instanceof EnvironmentCredentialProvider);
+        assertThat(credentialProvider).isInstanceOf(EnvironmentCredentialProvider.class);
     }
 
     @Test
     public void testSystemCredentialProviderHappyCase() {
         CredentialProvider credentialProvider = newCredentialProvider(SYS_PROPERTIES, configProps);
-        assertNotNull(credentialProvider);
-        assertTrue(credentialProvider instanceof SystemCredentialProvider);
+        assertThat(credentialProvider).isInstanceOf(SystemCredentialProvider.class);
     }
 
     @Test
     public void testDefaultCredentialProviderHappyCase() {
         CredentialProvider credentialProvider = newCredentialProvider(AUTO, configProps);
-        assertNotNull(credentialProvider);
-        assertTrue(credentialProvider instanceof DefaultCredentialProvider);
+        assertThat(credentialProvider).isInstanceOf(DefaultCredentialProvider.class);
     }
 
     @Test
     public void testCredentialProviderWithNullProvider() {
         CredentialProvider credentialProvider = newCredentialProvider(null, configProps);
-        assertNotNull(credentialProvider);
-        assertTrue(credentialProvider instanceof DefaultCredentialProvider);
+        assertThat(credentialProvider).isInstanceOf(DefaultCredentialProvider.class);
+    }
+
+    @Test
+    public void testAssumeRoleCredentialProviderHappyCase() {
+        configProps.setProperty(AWSConfigConstants.roleArn(AWS_CREDENTIALS_PROVIDER), "arn-1234567812345678");
+        configProps.setProperty(AWSConfigConstants.roleSessionName(AWS_CREDENTIALS_PROVIDER), "role-session");
+        CredentialProvider credentialProvider = newCredentialProvider(ASSUME_ROLE, configProps);
+        assertThat(credentialProvider).isInstanceOf(AssumeRoleCredentialsProvider.class);
+    }
+
+    @Test
+    public void testAssumeRoleCredentialProviderInvalidConfigurationProperties() {
+        assertThatExceptionOfType(IllegalArgumentException.class)
+                .isThrownBy(() -> newCredentialProvider(ASSUME_ROLE, configProps))
+                .withMessageContaining("AWS role arn to be assumed must be provided with credential provider type ASSUME_ROLE");
     }
 }

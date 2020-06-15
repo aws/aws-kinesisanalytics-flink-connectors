@@ -46,7 +46,7 @@ import static com.amazonaws.services.kinesisanalytics.flink.connectors.testutils
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.testutils.TestUtils.getSerializationSchema;
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.testutils.TestUtils.getStandardProperties;
 import static org.apache.flink.streaming.api.functions.sink.SinkFunction.Context;
-import static org.mockito.Matchers.any;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
