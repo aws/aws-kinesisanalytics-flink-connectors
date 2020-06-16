@@ -35,6 +35,8 @@ import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.AW
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants.CredentialProviderType.ASSUME_ROLE;
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants.CredentialProviderType.AUTO;
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants.CredentialProviderType.BASIC;
+import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.ProducerConfigConstants.DEFAULT_MAXIMUM_BATCH_BYTES;
+import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.ProducerConfigConstants.REDUCED_QUOTA_MAXIMUM_THROUGHPUT;
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.util.AWSUtil.createKinesisFirehoseClientFromConfiguration;
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.util.AWSUtil.getCredentialProviderType;
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.util.AWSUtil.validateAssumeRoleCredentialsProvider;
@@ -242,5 +244,24 @@ public class AWSUtilTest {
         configProps.setProperty("key", "ASSUME_ROLE");
 
         assertThat(getCredentialProviderType(configProps, "key")).isEqualTo(ASSUME_ROLE);
+    }
+
+    @Test
+    public void testGetDefaultMaxPutRecordBatchBytesForNullRegion() {
+        assertThat(AWSUtil.getDefaultMaxPutRecordBatchBytes(null)).isEqualTo(REDUCED_QUOTA_MAXIMUM_THROUGHPUT);
+    }
+
+    @Test
+    public void testGetDefaultMaxPutRecordBatchBytesForHighQuotaRegions() {
+        assertThat(AWSUtil.getDefaultMaxPutRecordBatchBytes("us-east-1")).isEqualTo(DEFAULT_MAXIMUM_BATCH_BYTES);
+        assertThat(AWSUtil.getDefaultMaxPutRecordBatchBytes("us-west-2")).isEqualTo(DEFAULT_MAXIMUM_BATCH_BYTES);
+        assertThat(AWSUtil.getDefaultMaxPutRecordBatchBytes("eu-west-1")).isEqualTo(DEFAULT_MAXIMUM_BATCH_BYTES);
+    }
+
+    @Test
+    public void testGetDefaultMaxPutRecordBatchBytesForReducedQuotaRegions() {
+        assertThat(AWSUtil.getDefaultMaxPutRecordBatchBytes("us-east-2")).isEqualTo(REDUCED_QUOTA_MAXIMUM_THROUGHPUT);
+        assertThat(AWSUtil.getDefaultMaxPutRecordBatchBytes("us-west-1")).isEqualTo(REDUCED_QUOTA_MAXIMUM_THROUGHPUT);
+        assertThat(AWSUtil.getDefaultMaxPutRecordBatchBytes("eu-west-2")).isEqualTo(REDUCED_QUOTA_MAXIMUM_THROUGHPUT);
     }
 }

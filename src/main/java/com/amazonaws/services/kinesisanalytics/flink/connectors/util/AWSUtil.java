@@ -20,7 +20,6 @@ package com.amazonaws.services.kinesisanalytics.flink.connectors.util;
 
 import com.amazonaws.client.builder.AwsClientBuilder;
 import com.amazonaws.regions.Regions;
-import com.amazonaws.services.kinesis.model.InvalidArgumentException;
 import com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants;
 import com.amazonaws.services.kinesisanalytics.flink.connectors.provider.credential.CredentialProvider;
 import com.amazonaws.services.kinesisfirehose.AmazonKinesisFirehose;
@@ -29,6 +28,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Validate;
 
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 import java.util.Properties;
 
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants.AWS_CREDENTIALS_PROVIDER;
@@ -40,6 +40,8 @@ import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.AW
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants.roleArn;
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants.roleSessionName;
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants.secretKey;
+import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.ProducerConfigConstants.DEFAULT_MAXIMUM_BATCH_BYTES;
+import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.ProducerConfigConstants.REDUCED_QUOTA_MAXIMUM_THROUGHPUT;
 
 public final class AWSUtil {
 
@@ -150,5 +152,28 @@ public final class AWSUtil {
 
     public static Properties validateAssumeRoleCredentialsProvider(final Properties configProps) {
         return validateAssumeRoleCredentialsProvider(configProps, AWS_CREDENTIALS_PROVIDER);
+    }
+
+    /**
+     * Computes a sensible maximum put record batch size based on region.
+     * There is a maximum batch size of 4 MiB per call, this will exceed the 1 MiB/second quota in some regions.
+     * https://docs.aws.amazon.com/firehose/latest/dev/limits.html
+     *
+     * If the region is null, it falls back to the lower batch size.
+     * Customer can override this value in producer properties.
+     *
+     * @param region the region the producer is running in
+     * @return a sensible maximum batch size
+     */
+    public static int getDefaultMaxPutRecordBatchBytes(@Nullable final String region) {
+        if (region != null) {
+            switch (region) {
+                case "us-east-1":
+                case "us-west-2":
+                case "eu-west-1":
+                    return DEFAULT_MAXIMUM_BATCH_BYTES;
+            }
+        }
+        return REDUCED_QUOTA_MAXIMUM_THROUGHPUT;
     }
 }
