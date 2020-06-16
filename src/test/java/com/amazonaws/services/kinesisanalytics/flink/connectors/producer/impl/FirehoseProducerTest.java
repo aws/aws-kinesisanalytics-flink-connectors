@@ -24,9 +24,9 @@ import com.amazonaws.services.kinesisfirehose.model.PutRecordBatchResponseEntry;
 import com.amazonaws.services.kinesisfirehose.model.PutRecordBatchResult;
 import com.amazonaws.services.kinesisfirehose.model.Record;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.common.util.concurrent.SettableFuture;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.slf4j.Logger;
@@ -34,6 +34,7 @@ import org.slf4j.LoggerFactory;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
+import javax.annotation.Nonnull;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
@@ -42,18 +43,20 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.stream.IntStream;
 
+import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants.AWS_REGION;
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.ProducerConfigConstants.DEFAULT_MAX_BUFFER_SIZE;
+import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.ProducerConfigConstants.FIREHOSE_PRODUCER_BUFFER_MAX_BATCH_BYTES;
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.ProducerConfigConstants.FIREHOSE_PRODUCER_BUFFER_MAX_TIMEOUT;
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.producer.impl.FirehoseProducer.UserRecordResult;
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.testutils.TestUtils.DEFAULT_DELIVERY_STREAM;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.testng.Assert.assertEquals;
-import static org.testng.Assert.assertFalse;
-import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.fail;
 
 /**
@@ -64,20 +67,21 @@ import static org.testng.Assert.fail;
 public class FirehoseProducerTest {
     private static final Logger LOGGER = LoggerFactory.getLogger(FirehoseProducerTest.class);
 
+    private static final int KB_512 = 512 * 1_024;
+
     @Mock
     private AmazonKinesisFirehose firehoseClient;
 
     private FirehoseProducer<UserRecordResult, Record> firehoseProducer;
 
+    @Captor
+    private ArgumentCaptor<PutRecordBatchRequest> putRecordCaptor;
+
     @BeforeMethod
     public void init() {
         MockitoAnnotations.initMocks(this);
 
-        Properties config = new Properties();
-        config.setProperty(FIREHOSE_PRODUCER_BUFFER_MAX_TIMEOUT, "1000");
-
-        this.firehoseProducer = new FirehoseProducer<>(DEFAULT_DELIVERY_STREAM, firehoseClient,
-                config);
+        this.firehoseProducer = createFirehoseProducer();
     }
 
     @Test
@@ -89,8 +93,9 @@ public class FirehoseProducerTest {
             addRecord(firehoseProducer);
         }
         Thread.sleep(2000);
+
         LOGGER.debug("Number of outstanding records: {}", firehoseProducer.getOutstandingRecordsCount());
-        assertTrue(firehoseProducer.getOutstandingRecordsCount() == 0);
+        assertThat(firehoseProducer.getOutstandingRecordsCount()).isEqualTo(0);
     }
 
     @Test
@@ -108,7 +113,7 @@ public class FirehoseProducerTest {
         exec.invokeAll(futures);
         Thread.currentThread().join(3000);
         LOGGER.debug("Number of outstanding items: {}", firehoseProducer.getOutstandingRecordsCount());
-        assertTrue(firehoseProducer.getOutstandingRecordsCount() == 0);
+        assertThat(firehoseProducer.getOutstandingRecordsCount()).isEqualTo(0);
     }
 
     @Test
@@ -127,20 +132,20 @@ public class FirehoseProducerTest {
 
         List<Future<ListenableFuture<UserRecordResult>>> results = exec.invokeAll(futures);
 
-        for (Future f : results) {
+        for (Future<ListenableFuture<UserRecordResult>> f : results) {
             while(!f.isDone()) {
                 Thread.sleep(100);
             }
-            SettableFuture fi = (SettableFuture) f.get();
-            UserRecordResult r = (UserRecordResult) fi.get();
-            assertTrue(r.isSuccessful());
+            ListenableFuture<UserRecordResult> fi = f.get();
+            UserRecordResult r = fi.get();
+            assertThat(r.isSuccessful()).isTrue();
         }
         firehoseProducer.flushSync();
 
         LOGGER.debug("Number of outstanding items: {}", firehoseProducer.getOutstandingRecordsCount());
         verify(firehoseClient).putRecordBatch(captor.capture());
-        assertEquals(firehoseProducer.getOutstandingRecordsCount() , 0);
-        assertFalse(firehoseProducer.isFlushFailed());
+        assertThat(firehoseProducer.getOutstandingRecordsCount()).isEqualTo(0);
+        assertThat(firehoseProducer.isFlushFailed()).isFalse();
     }
 
 
@@ -160,13 +165,13 @@ public class FirehoseProducerTest {
 
         List<Future<ListenableFuture<UserRecordResult>>> results = exec.invokeAll(futures);
 
-        for (Future f : results) {
+        for (Future<ListenableFuture<UserRecordResult>> f : results) {
             while(!f.isDone()) {
                 Thread.sleep(100);
             }
-            SettableFuture fi = (SettableFuture) f.get();
-            UserRecordResult r = (UserRecordResult) fi.get();
-            assertTrue(r.isSuccessful());
+            ListenableFuture<UserRecordResult> fi = f.get();
+            UserRecordResult r = fi.get();
+            assertThat(r.isSuccessful()).isTrue();
         }
 
         while (firehoseProducer.getOutstandingRecordsCount() > 0 && !firehoseProducer.isFlushFailed()) {
@@ -180,8 +185,8 @@ public class FirehoseProducerTest {
 
         LOGGER.debug("Number of outstanding items: {}", firehoseProducer.getOutstandingRecordsCount());
         verify(firehoseClient).putRecordBatch(captor.capture());
-        assertEquals(firehoseProducer.getOutstandingRecordsCount(), 0);
-        assertFalse(firehoseProducer.isFlushFailed());
+        assertThat(firehoseProducer.getOutstandingRecordsCount()).isEqualTo(0);
+        assertThat(firehoseProducer.isFlushFailed()).isFalse();
     }
 
     @Test
@@ -193,7 +198,7 @@ public class FirehoseProducerTest {
             addRecord(firehoseProducer);
         }
         Thread.sleep(2000);
-        assertTrue(firehoseProducer.getOutstandingRecordsCount() == 0);
+        assertThat(firehoseProducer.getOutstandingRecordsCount()).isEqualTo(0);
     }
 
     @Test
@@ -206,13 +211,12 @@ public class FirehoseProducerTest {
         }
 
         Thread.sleep(2000);
-        assertTrue(firehoseProducer.getOutstandingRecordsCount() == 0);
+        assertThat(firehoseProducer.getOutstandingRecordsCount()).isEqualTo(0);
     }
 
     /**
      * This test is responsible for checking if the consumer thread has performed the work or not, so there is no way to
      * throw an exception to be catch here, so the assertion goes along the fact if the buffer was flushed or not.
-     * @throws Exception
      */
     @Test
     public void testFirehoseProducerSingleThreadFailedToSendRecords() throws Exception {
@@ -227,17 +231,86 @@ public class FirehoseProducerTest {
             addRecord(firehoseProducer);
         }
         Thread.sleep(2000);
-        assertEquals(firehoseProducer.getOutstandingRecordsCount(), DEFAULT_MAX_BUFFER_SIZE);
-        assertTrue(firehoseProducer.isFlushFailed());
+        assertThat(firehoseProducer.getOutstandingRecordsCount()).isEqualTo(DEFAULT_MAX_BUFFER_SIZE);
+        assertThat(firehoseProducer.isFlushFailed()).isTrue();
     }
 
-    private ListenableFuture<UserRecordResult> addRecord(final FirehoseProducer producer) {
+    @Test
+    public void testFirehoseProducerBatchesRecords() throws Exception {
+        when(firehoseClient.putRecordBatch(any(PutRecordBatchRequest.class)))
+                .thenReturn(new PutRecordBatchResult());
+
+        // Fill up the maximum capacity: 8 * 512kB = 4MB
+        IntStream.range(0, 8).forEach(i -> addRecord(firehoseProducer, KB_512));
+
+        // Add a single byte to overflow the maximum
+        addRecord(firehoseProducer, 1);
+
+        Thread.sleep(2000);
+
+        assertThat(firehoseProducer.getOutstandingRecordsCount()).isEqualTo(0);
+        verify(firehoseClient, times(2)).putRecordBatch(putRecordCaptor.capture());
+
+        // The first batch should contain 4 records (up to 4MB), the second should contain the remaining record
+        assertThat(putRecordCaptor.getAllValues().get(0).getRecords())
+                .hasSize(8).allMatch(e -> e.getData().limit() == KB_512);
+
+        assertThat(putRecordCaptor.getAllValues().get(1).getRecords())
+                .hasSize(1).allMatch(e -> e.getData().limit() == 1);
+    }
+
+    @Test
+    public void testFirehoseProducerBatchesRecordsWithCustomBatchSize() throws Exception {
+        Properties config = new Properties();
+        config.setProperty(FIREHOSE_PRODUCER_BUFFER_MAX_BATCH_BYTES, "100");
+
+        FirehoseProducer<UserRecordResult, Record> producer = createFirehoseProducer(config);
+
+        when(firehoseClient.putRecordBatch(any(PutRecordBatchRequest.class)))
+                .thenReturn(new PutRecordBatchResult());
+
+        // Fill up the maximum capacity: 8 * 512kB = 4MB
+        IntStream.range(0, 2).forEach(i -> addRecord(producer, 100));
+
+        Thread.sleep(2000);
+
+        assertThat(firehoseProducer.getOutstandingRecordsCount()).isEqualTo(0);
+        verify(firehoseClient, times(2)).putRecordBatch(putRecordCaptor.capture());
+
+        // The first batch should contain 4 records (up to 4MB), the second should contain the remaining record
+        assertThat(putRecordCaptor.getAllValues().get(0).getRecords())
+                .hasSize(1).allMatch(e -> e.getData().limit() == 100);
+
+        assertThat(putRecordCaptor.getAllValues().get(1).getRecords())
+                .hasSize(1).allMatch(e -> e.getData().limit() == 100);
+    }
+
+    @Nonnull
+    private ListenableFuture<UserRecordResult> addRecord(final FirehoseProducer<UserRecordResult, Record> producer) {
+        return addRecord(producer, 64);
+    }
+
+    @Nonnull
+    private ListenableFuture<UserRecordResult> addRecord(final FirehoseProducer<UserRecordResult, Record> producer, final int length) {
         try {
             Record record = new Record().withData(ByteBuffer.wrap(
-                    RandomStringUtils.randomAlphabetic(64).getBytes()));
+                    RandomStringUtils.randomAlphabetic(length).getBytes()));
+
             return producer.addUserRecord(record);
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
+    }
+
+    @Nonnull
+    private FirehoseProducer<UserRecordResult, Record> createFirehoseProducer() {
+        return createFirehoseProducer(new Properties());
+    }
+
+    @Nonnull
+    private FirehoseProducer<UserRecordResult, Record> createFirehoseProducer(@Nonnull final Properties config) {
+        config.setProperty(FIREHOSE_PRODUCER_BUFFER_MAX_TIMEOUT, "500");
+        config.setProperty(AWS_REGION, "us-east-1");
+        return new FirehoseProducer<>(DEFAULT_DELIVERY_STREAM, firehoseClient, config);
     }
 }

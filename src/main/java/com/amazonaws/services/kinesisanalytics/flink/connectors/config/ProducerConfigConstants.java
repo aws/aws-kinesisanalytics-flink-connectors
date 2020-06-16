@@ -28,6 +28,9 @@ public class ProducerConfigConstants {
      * */
     public static final int DEFAULT_MAX_BUFFER_SIZE = 500;
 
+    /** The maximum number of bytes that can be sent in a single PutRecordBatch operation */
+    public static final int DEFAULT_MAXIMUM_BATCH_BYTES = 4 * 1_024 * 1_024;
+
     /** The MAX default timeout for the buffer to be flushed */
     public static final long DEFAULT_MAX_BUFFER_TIMEOUT = TimeUnit.MINUTES.toMillis(5);
 
@@ -53,7 +56,13 @@ public class ProducerConfigConstants {
      * */
     public static final long DEFAULT_BASE_BACKOFF = 10L;
 
+    /** The reduced quota maximum throughout.
+     * Some regions have lower throughput quotas than others.
+     * Please refer to https://docs.aws.amazon.com/firehose/latest/dev/limits.html for further reference. */
+    public static final int REDUCED_QUOTA_MAXIMUM_THROUGHPUT = 1_024 * 1_024;
+
     public static final String FIREHOSE_PRODUCER_BUFFER_MAX_SIZE = "firehose.producer.batch.size";
+    public static final String FIREHOSE_PRODUCER_BUFFER_MAX_BATCH_BYTES = "firehose.producer.batch.bytes";
     public static final String FIREHOSE_PRODUCER_BUFFER_MAX_TIMEOUT = "firehose.producer.buffer.timeout";
     public static final String FIREHOSE_PRODUCER_BUFFER_FULL_WAIT_TIMEOUT = "firehose.producer.buffer.full.wait.timeout";
     public static final String FIREHOSE_PRODUCER_BUFFER_FLUSH_TIMEOUT = "firehose.producer.buffer.flush.timeout";
