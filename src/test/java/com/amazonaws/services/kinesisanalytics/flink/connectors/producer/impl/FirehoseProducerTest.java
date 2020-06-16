@@ -269,7 +269,7 @@ public class FirehoseProducerTest {
         when(firehoseClient.putRecordBatch(any(PutRecordBatchRequest.class)))
                 .thenReturn(new PutRecordBatchResult());
 
-        // Fill up the maximum capacity: 8 * 512kB = 4MB
+        // Overflow the maximum capacity: 2 * 100kB = 200kB
         IntStream.range(0, 2).forEach(i -> addRecord(producer, 100));
 
         Thread.sleep(2000);
@@ -277,7 +277,7 @@ public class FirehoseProducerTest {
         assertThat(firehoseProducer.getOutstandingRecordsCount()).isEqualTo(0);
         verify(firehoseClient, times(2)).putRecordBatch(putRecordCaptor.capture());
 
-        // The first batch should contain 4 records (up to 4MB), the second should contain the remaining record
+        // The first batch should contain 1 record (up to 100kB), the second should contain the remaining record
         assertThat(putRecordCaptor.getAllValues().get(0).getRecords())
                 .hasSize(1).allMatch(e -> e.getData().limit() == 100);
 
