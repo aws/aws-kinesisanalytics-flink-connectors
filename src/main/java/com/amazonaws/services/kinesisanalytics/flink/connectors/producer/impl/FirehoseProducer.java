@@ -258,7 +258,7 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
      */
     private void prepareRecordsToSubmit(@Nonnull final Queue<Record> sourceQueue, @Nonnull final Queue<Record> targetQueue) {
         int total = 0;
-        while (!sourceQueue.isEmpty() && (total + sourceQueue.peek().getData().limit()) <= configuration.getMaxPutRecordBatchBytes()) {
+        while (!sourceQueue.isEmpty() && (total + sourceQueue.peek().getData().capacity()) <= configuration.getMaxPutRecordBatchBytes()) {
             total += sourceQueue.peek().getData().capacity();
             targetQueue.add(sourceQueue.poll());
         }
