@@ -247,7 +247,7 @@ public class FirehoseProducerTest {
         // Add a single byte to overflow the maximum
         addRecord(firehoseProducer, 1);
 
-        Thread.sleep(2000);
+        Thread.sleep(3000);
 
         assertThat(firehoseProducer.getOutstandingRecordsCount()).isEqualTo(0);
         verify(firehoseClient, times(2)).putRecordBatch(putRecordCaptor.capture());
@@ -273,7 +273,7 @@ public class FirehoseProducerTest {
         // Overflow the maximum capacity: 2 * 100kB = 200kB
         IntStream.range(0, 2).forEach(i -> addRecord(producer, 100));
 
-        Thread.sleep(2000);
+        Thread.sleep(3000);
 
         assertThat(firehoseProducer.getOutstandingRecordsCount()).isEqualTo(0);
         verify(firehoseClient, times(2)).putRecordBatch(putRecordCaptor.capture());
@@ -331,7 +331,7 @@ public class FirehoseProducerTest {
 
     @Nonnull
     private FirehoseProducer<UserRecordResult, Record> createFirehoseProducer(@Nonnull final Properties config) {
-        config.setProperty(FIREHOSE_PRODUCER_BUFFER_MAX_TIMEOUT, "500");
+        config.setProperty(FIREHOSE_PRODUCER_BUFFER_MAX_TIMEOUT, "1000");
         config.setProperty(AWS_REGION, "us-east-1");
         return new FirehoseProducer<>(DEFAULT_DELIVERY_STREAM, firehoseClient, config);
     }
