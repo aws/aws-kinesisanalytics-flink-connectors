@@ -18,7 +18,7 @@
 
 package com.amazonaws.services.kinesisanalytics.flink.connectors.producer;
 
-import com.google.common.util.concurrent.ListenableFuture;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * Interface responsible for sending data a specific sink
@@ -31,7 +31,7 @@ public interface IProducer<O, R> {
      * @return a {@code ListenableFuture} with the result for the operation.
      * @throws Exception
      */
-    ListenableFuture<O> addUserRecord(final R record) throws Exception;
+    CompletableFuture<O> addUserRecord(final R record) throws Exception;
 
     /**
      * This method should send data to an specific destination
@@ -40,7 +40,7 @@ public interface IProducer<O, R> {
      * @return a {@code ListenableFuture} with the result for the operation.
      * @throws Exception
      */
-    ListenableFuture<O> addUserRecord(final R record, final long operationTimeoutInMillis) throws Exception;
+    CompletableFuture<O> addUserRecord(final R record, final long operationTimeoutInMillis) throws Exception;
 
     /**
      * Destroy and release any used resource.

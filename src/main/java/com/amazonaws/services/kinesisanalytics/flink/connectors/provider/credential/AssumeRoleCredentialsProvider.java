@@ -24,7 +24,6 @@ import com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfig
 import com.amazonaws.services.kinesisanalytics.flink.connectors.provider.credential.factory.CredentialProviderFactory;
 import com.amazonaws.services.securitytoken.AWSSecurityTokenService;
 import com.amazonaws.services.securitytoken.AWSSecurityTokenServiceClientBuilder;
-import com.google.common.annotations.VisibleForTesting;
 
 import javax.annotation.Nonnull;
 import java.util.Properties;
@@ -61,7 +60,6 @@ public class AssumeRoleCredentialsProvider extends CredentialProvider {
                 baseCredentials);
     }
 
-    @VisibleForTesting
     AWSCredentialsProvider createAwsCredentialsProvider(@Nonnull String roleArn,
                                                         @Nonnull String roleSessionName,
                                                         @Nonnull String externalId,

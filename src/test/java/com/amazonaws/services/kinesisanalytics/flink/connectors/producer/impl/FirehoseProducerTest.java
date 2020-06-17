@@ -18,12 +18,12 @@
 
 package com.amazonaws.services.kinesisanalytics.flink.connectors.producer.impl;
 
+import com.amazonaws.services.kinesisanalytics.flink.connectors.producer.impl.FirehoseProducer.FirehoseThreadFactory;
 import com.amazonaws.services.kinesisfirehose.AmazonKinesisFirehose;
 import com.amazonaws.services.kinesisfirehose.model.PutRecordBatchRequest;
 import com.amazonaws.services.kinesisfirehose.model.PutRecordBatchResponseEntry;
 import com.amazonaws.services.kinesisfirehose.model.PutRecordBatchResult;
 import com.amazonaws.services.kinesisfirehose.model.Record;
-import com.google.common.util.concurrent.ListenableFuture;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
@@ -40,6 +40,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -104,7 +105,7 @@ public class FirehoseProducerTest {
         when(firehoseClient.putRecordBatch(any(PutRecordBatchRequest.class))).thenReturn(successResult);
 
         ExecutorService exec = Executors.newFixedThreadPool(4);
-        List<Callable<ListenableFuture<UserRecordResult>>> futures = new ArrayList<>();
+        List<Callable<CompletableFuture<UserRecordResult>>> futures = new ArrayList<>();
 
         for (int j = 0; j < DEFAULT_MAX_BUFFER_SIZE; ++j) {
             futures.add(() -> addRecord(firehoseProducer));
@@ -124,19 +125,19 @@ public class FirehoseProducerTest {
         when(firehoseClient.putRecordBatch(any(PutRecordBatchRequest.class))).thenReturn(successResult);
 
         ExecutorService exec = Executors.newFixedThreadPool(4);
-        List<Callable<ListenableFuture<UserRecordResult>>> futures = new ArrayList<>();
+        List<Callable<CompletableFuture<UserRecordResult>>> futures = new ArrayList<>();
 
         for (int j = 0; j < 400; ++j) {
             futures.add(() -> addRecord(firehoseProducer));
         }
 
-        List<Future<ListenableFuture<UserRecordResult>>> results = exec.invokeAll(futures);
+        List<Future<CompletableFuture<UserRecordResult>>> results = exec.invokeAll(futures);
 
-        for (Future<ListenableFuture<UserRecordResult>> f : results) {
+        for (Future<CompletableFuture<UserRecordResult>> f : results) {
             while(!f.isDone()) {
                 Thread.sleep(100);
             }
-            ListenableFuture<UserRecordResult> fi = f.get();
+            CompletableFuture<UserRecordResult> fi = f.get();
             UserRecordResult r = fi.get();
             assertThat(r.isSuccessful()).isTrue();
         }
@@ -157,19 +158,19 @@ public class FirehoseProducerTest {
         when(firehoseClient.putRecordBatch(any(PutRecordBatchRequest.class))).thenReturn(successResult);
 
         ExecutorService exec = Executors.newFixedThreadPool(4);
-        List<Callable<ListenableFuture<UserRecordResult>>> futures = new ArrayList<>();
+        List<Callable<CompletableFuture<UserRecordResult>>> futures = new ArrayList<>();
 
         for (int j = 0; j < 400; ++j) {
             futures.add(() -> addRecord(firehoseProducer));
         }
 
-        List<Future<ListenableFuture<UserRecordResult>>> results = exec.invokeAll(futures);
+        List<Future<CompletableFuture<UserRecordResult>>> results = exec.invokeAll(futures);
 
-        for (Future<ListenableFuture<UserRecordResult>> f : results) {
+        for (Future<CompletableFuture<UserRecordResult>> f : results) {
             while(!f.isDone()) {
                 Thread.sleep(100);
             }
-            ListenableFuture<UserRecordResult> fi = f.get();
+            CompletableFuture<UserRecordResult> fi = f.get();
             UserRecordResult r = fi.get();
             assertThat(r.isSuccessful()).isTrue();
         }
@@ -246,7 +247,7 @@ public class FirehoseProducerTest {
         // Add a single byte to overflow the maximum
         addRecord(firehoseProducer, 1);
 
-        Thread.sleep(2000);
+        Thread.sleep(3000);
 
         assertThat(firehoseProducer.getOutstandingRecordsCount()).isEqualTo(0);
         verify(firehoseClient, times(2)).putRecordBatch(putRecordCaptor.capture());
@@ -272,7 +273,7 @@ public class FirehoseProducerTest {
         // Overflow the maximum capacity: 2 * 100kB = 200kB
         IntStream.range(0, 2).forEach(i -> addRecord(producer, 100));
 
-        Thread.sleep(2000);
+        Thread.sleep(3000);
 
         assertThat(firehoseProducer.getOutstandingRecordsCount()).isEqualTo(0);
         verify(firehoseClient, times(2)).putRecordBatch(putRecordCaptor.capture());
@@ -285,13 +286,34 @@ public class FirehoseProducerTest {
                 .hasSize(1).allMatch(e -> e.getData().limit() == 100);
     }
 
+    @Test
+    public void testThreadFactoryNewThreadName() {
+        FirehoseThreadFactory threadFactory = new FirehoseThreadFactory();
+        Thread thread1 = threadFactory.newThread(() -> LOGGER.info("Running task 1"));
+        Thread thread2 = threadFactory.newThread(() -> LOGGER.info("Running task 2"));
+        Thread thread3 = threadFactory.newThread(() -> LOGGER.info("Running task 3"));
+
+        // Thread index is allocated statically, so cannot deterministically guarantee the thread number
+        // Work out thread1's number and then check subsequent thread names
+        int threadNumber = Integer.parseInt(thread1.getName().substring(thread1.getName().lastIndexOf('-') + 1));
+
+        assertThat(thread1.getName()).isEqualTo("kda-writer-thread-" + threadNumber++);
+        assertThat(thread1.isDaemon()).isFalse();
+
+        assertThat(thread2.getName()).isEqualTo("kda-writer-thread-" + threadNumber++);
+        assertThat(thread2.isDaemon()).isFalse();
+
+        assertThat(thread3.getName()).isEqualTo("kda-writer-thread-" + threadNumber);
+        assertThat(thread3.isDaemon()).isFalse();
+    }
+
     @Nonnull
-    private ListenableFuture<UserRecordResult> addRecord(final FirehoseProducer<UserRecordResult, Record> producer) {
+    private CompletableFuture<UserRecordResult> addRecord(final FirehoseProducer<UserRecordResult, Record> producer) {
         return addRecord(producer, 64);
     }
 
     @Nonnull
-    private ListenableFuture<UserRecordResult> addRecord(final FirehoseProducer<UserRecordResult, Record> producer, final int length) {
+    private CompletableFuture<UserRecordResult> addRecord(final FirehoseProducer<UserRecordResult, Record> producer, final int length) {
         try {
             Record record = new Record().withData(ByteBuffer.wrap(
                     RandomStringUtils.randomAlphabetic(length).getBytes()));
@@ -309,7 +331,7 @@ public class FirehoseProducerTest {
 
     @Nonnull
     private FirehoseProducer<UserRecordResult, Record> createFirehoseProducer(@Nonnull final Properties config) {
-        config.setProperty(FIREHOSE_PRODUCER_BUFFER_MAX_TIMEOUT, "500");
+        config.setProperty(FIREHOSE_PRODUCER_BUFFER_MAX_TIMEOUT, "1000");
         config.setProperty(AWS_REGION, "us-east-1");
         return new FirehoseProducer<>(DEFAULT_DELIVERY_STREAM, firehoseClient, config);
     }

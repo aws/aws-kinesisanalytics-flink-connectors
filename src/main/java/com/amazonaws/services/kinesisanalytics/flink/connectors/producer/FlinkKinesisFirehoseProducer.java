@@ -28,10 +28,6 @@ import com.amazonaws.services.kinesisanalytics.flink.connectors.serialization.Ki
 import com.amazonaws.services.kinesisanalytics.flink.connectors.util.AWSUtil;
 import com.amazonaws.services.kinesisfirehose.AmazonKinesisFirehose;
 import com.amazonaws.services.kinesisfirehose.model.Record;
-import com.google.common.annotations.VisibleForTesting;
-import com.google.common.util.concurrent.FutureCallback;
-import com.google.common.util.concurrent.Futures;
-import com.google.common.util.concurrent.ListenableFuture;
 import org.apache.commons.lang3.Validate;
 import org.apache.flink.api.common.serialization.SerializationSchema;
 import org.apache.flink.configuration.Configuration;
@@ -42,7 +38,7 @@ import org.apache.flink.streaming.api.functions.sink.RichSinkFunction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.annotation.Nullable;
+import javax.annotation.Nonnull;
 import java.nio.ByteBuffer;
 import java.util.Properties;
 
@@ -76,9 +72,6 @@ public class FlinkKinesisFirehoseProducer<OUT> extends RichSinkFunction<OUT> imp
     /** AWS Kinesis Firehose producer */
     private transient IProducer<UserRecordResult, Record> firehoseProducer;
 
-    /** A monitor callback to handle failures */
-    private transient FutureCallback<UserRecordResult> monitorCallback;
-
     /**
      * Creates a new Flink Kinesis Firehose Producer.
      * @param deliveryStream The AWS Kinesis Firehose delivery stream.
@@ -86,7 +79,8 @@ public class FlinkKinesisFirehoseProducer<OUT> extends RichSinkFunction<OUT> imp
      * @param configProps The properties used to configure Kinesis Firehose client.
      * @param credentialProviderType The specified Credential Provider type.
      */
-    public FlinkKinesisFirehoseProducer(final String deliveryStream, final KinesisFirehoseSerializationSchema<OUT> schema,
+    public FlinkKinesisFirehoseProducer(final String deliveryStream,
+                                        final KinesisFirehoseSerializationSchema<OUT> schema,
                                         final Properties configProps,
                                         final CredentialProviderType credentialProviderType) {
         this.defaultDeliveryStream = Validate.notBlank(deliveryStream, "Delivery stream cannot be null or empty");
@@ -117,15 +111,6 @@ public class FlinkKinesisFirehoseProducer<OUT> extends RichSinkFunction<OUT> imp
         this(deliveryStream, schema, configProps, getCredentialProviderType(configProps, AWS_CREDENTIALS_PROVIDER));
     }
 
-    @VisibleForTesting
-    FlinkKinesisFirehoseProducer(final String deliveryStream, final KinesisFirehoseSerializationSchema<OUT> schema,
-                                 final Properties configProps, final AmazonKinesisFirehose firehoseClient,
-                                 final IProducer<UserRecordResult, Record> firehoseProducer) {
-        this(deliveryStream, schema, configProps);
-        this.firehoseClient = Validate.notNull(firehoseClient);
-        this.firehoseProducer = Validate.notNull(firehoseProducer);
-    }
-
     public void setFailOnError(final boolean failOnError) {
         this.failOnError = failOnError;
     }
@@ -137,41 +122,20 @@ public class FlinkKinesisFirehoseProducer<OUT> extends RichSinkFunction<OUT> imp
         this.credentialsProvider = CredentialProviderFactory.newCredentialProvider(credentialProviderType, config);
         LOGGER.info("Credential provider: {}", credentialsProvider.getAwsCredentialsProvider().getClass().getName() );
 
-        /** This compare and swap exist only for testing purposes when passing an AmazonKinesisFirehoseAsync */
-        this.firehoseClient = (firehoseClient != null) ? firehoseClient:
-                AWSUtil.createKinesisFirehoseClientFromConfiguration(config, credentialsProvider);
+        this.firehoseClient = createKinesisFirehoseClient();
+        this.firehoseProducer = createFirehoseProducer();
 
-        this.firehoseProducer = (firehoseProducer != null) ? firehoseProducer :
-                new FirehoseProducer<>(defaultDeliveryStream, firehoseClient, config);
         LOGGER.info("Started Kinesis Firehose client. Delivering to stream: {}", defaultDeliveryStream);
+    }
 
-        this.monitorCallback = new FutureCallback<UserRecordResult>() {
-            @Override
-            public void onSuccess(@Nullable UserRecordResult result) {
-                if (result == null) {
-                    return;
-                }
+    @Nonnull
+    AmazonKinesisFirehose createKinesisFirehoseClient() {
+        return AWSUtil.createKinesisFirehoseClientFromConfiguration(config, credentialsProvider);
+    }
 
-                final String msg = "Record could not be successfully sent.";
-                if (!result.isSuccessful()) {
-                    if (failOnError && lastThrownException == null) {
-                        lastThrownException = new RecordCouldNotBeSentException(msg, result.getException());
-                    } else {
-                        LOGGER.warn(msg);
-                    }
-                }
-            }
-
-            @Override
-            public void onFailure(Throwable t) {
-                final String msg = "An error has occurred trying to write a record.";
-                if (failOnError) {
-                    lastThrownException = t;
-                } else {
-                    LOGGER.warn(msg, t);
-                }
-            }
-        };
+    @Nonnull
+    IProducer<UserRecordResult, Record> createFirehoseProducer() {
+        return new FirehoseProducer<>(defaultDeliveryStream, firehoseClient, config);
     }
 
     @Override
@@ -185,8 +149,29 @@ public class FlinkKinesisFirehoseProducer<OUT> extends RichSinkFunction<OUT> imp
 
         propagateAsyncExceptions();
 
-        ListenableFuture<UserRecordResult> future = firehoseProducer.addUserRecord(new Record().withData(serializedValue));
-        Futures.addCallback(future, monitorCallback);
+        firehoseProducer
+                .addUserRecord(new Record().withData(serializedValue))
+                .handleAsync((record, throwable) -> {
+                    if (throwable != null) {
+                        final String msg = "An error has occurred trying to write a record.";
+                        if (failOnError) {
+                            lastThrownException = throwable;
+                        } else {
+                            LOGGER.warn(msg, throwable);
+                        }
+                    }
+
+                    if (record != null && !record.isSuccessful()) {
+                        final String msg = "Record could not be successfully sent.";
+                        if (failOnError && lastThrownException == null) {
+                            lastThrownException = new RecordCouldNotBeSentException(msg, record.getException());
+                        } else {
+                            LOGGER.warn(msg, record.getException());
+                        }
+                    }
+
+                    return null;
+                });
     }
 
     @Override

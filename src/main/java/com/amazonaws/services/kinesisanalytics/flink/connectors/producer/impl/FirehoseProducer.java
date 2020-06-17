@@ -29,9 +29,6 @@ import com.amazonaws.services.kinesisfirehose.model.PutRecordBatchResponseEntry;
 import com.amazonaws.services.kinesisfirehose.model.PutRecordBatchResult;
 import com.amazonaws.services.kinesisfirehose.model.Record;
 import com.amazonaws.services.kinesisfirehose.model.ServiceUnavailableException;
-import com.google.common.util.concurrent.ListenableFuture;
-import com.google.common.util.concurrent.SettableFuture;
-import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import org.apache.commons.lang3.RandomUtils;
 import org.apache.commons.lang3.Validate;
 import org.slf4j.Logger;
@@ -43,9 +40,12 @@ import javax.annotation.concurrent.ThreadSafe;
 import java.util.ArrayDeque;
 import java.util.Properties;
 import java.util.Queue;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.producer.impl.FirehoseProducer.UserRecordResult;
 
@@ -106,16 +106,12 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
         this.producerBuffer = new ArrayDeque<>(configuration.getMaxBufferSize());
         this.flusherBuffer = new ArrayDeque<>(configuration.getMaxBufferSize());
 
-        flusher = Executors.newSingleThreadExecutor(new ThreadFactoryBuilder()
-                .setDaemon(false)
-                .setNameFormat("kda-writer-thread-%d")
-                .build());
-
+        flusher = Executors.newSingleThreadExecutor(new FirehoseThreadFactory());
         flusher.submit(this::flushBuffer);
     }
 
     @Override
-    public ListenableFuture<O> addUserRecord(final R record) throws Exception {
+    public CompletableFuture<O> addUserRecord(final R record) throws Exception {
         return addUserRecord(record, configuration.getMaxOperationTimeoutInMillis());
     }
 
@@ -133,7 +129,7 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
      * this exception is thrown.
      */
     @Override
-    public ListenableFuture<O> addUserRecord(final R record, final long timeoutInMillis)
+    public CompletableFuture<O> addUserRecord(final R record, final long timeoutInMillis)
             throws TimeoutExpiredException, InterruptedException {
 
         Validate.notNull(record, "Record cannot be null.");
@@ -142,7 +138,7 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
         long operationTimeoutInNanos = TimeUnit.MILLISECONDS.toNanos(timeoutInMillis);
 
         synchronized (producerBufferLock) {
-            /** This happens whenever the current thread is trying to write, however, the Producer Buffer is full.
+            /* This happens whenever the current thread is trying to write, however, the Producer Buffer is full.
              * This guarantees if the writer thread is already running, should wait.
              * In addition, implements a kind of back pressure mechanism with a bail out condition, so we don't incur
              * in cases where the current thread waits forever.
@@ -153,7 +149,7 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
                     throw new TimeoutExpiredException("Timeout has expired for the given operation");
                 }
 
-                /** If the buffer is filled and the flusher isn't running yet we notify to wake up the flusher */
+                /* If the buffer is filled and the flusher isn't running yet we notify to wake up the flusher */
                 if (flusherBuffer.isEmpty()) {
                     producerBufferLock.notify();
                 }
@@ -162,16 +158,14 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
 
             producerBuffer.offer(record);
 
-            /** If the buffer was filled up right after the last insertion we would like to wake up the flusher thread
+            /* If the buffer was filled up right after the last insertion we would like to wake up the flusher thread
              * and send the buffered data to Kinesis Firehose as soon as possible */
             if (producerBuffer.size() >= configuration.getMaxBufferSize() && flusherBuffer.isEmpty()) {
                 producerBufferLock.notify();
             }
         }
         UserRecordResult recordResult = new UserRecordResult().setSuccessful(true);
-        SettableFuture<O> futureResult = SettableFuture.create();
-        futureResult.set((O) recordResult);
-        return futureResult;
+        return CompletableFuture.completedFuture((O) recordResult);
     }
 
     /**
@@ -191,7 +185,7 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
 
             synchronized (producerBufferLock) {
 
-                /** If the flusher buffer is not empty at this point we should fail, otherwise we would end up looping
+                /* If the flusher buffer is not empty at this point we should fail, otherwise we would end up looping
                  * forever since we are swapping references */
                 Validate.validState(flusherBuffer.isEmpty());
 
@@ -210,7 +204,7 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
                     continue;
                 }
             }
-            /** It's OK calling {@code submitBatchWithRetry} outside the critical section because this method does not make
+            /* It's OK calling {@code submitBatchWithRetry} outside the critical section because this method does not make
              * any changes to the object and the producer thread does not make any modifications to the flusherBuffer.
              * The only agent making changes to flusherBuffer is the flusher thread. */
             try {
@@ -218,7 +212,7 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
 
                 Queue<Record> emptyFlushBuffer = new ArrayDeque<>(configuration.getMaxBufferSize());
                 synchronized (producerBufferLock) {
-                    /** We perform a swap at this point because {@code ArrayDeque<>.clear()} iterates over the items nullifying
+                    /* We perform a swap at this point because {@code ArrayDeque<>.clear()} iterates over the items nullifying
                      * the items, and we would like to avoid such iteration just swapping references. */
                     Validate.validState(!flusherBuffer.isEmpty());
                     flusherBuffer = emptyFlushBuffer;
@@ -446,6 +440,19 @@ public class FirehoseProducer<O extends UserRecordResult, R extends Record> impl
         public UserRecordResult setSuccessful(boolean successful) {
             this.successful = successful;
             return this;
+        }
+    }
+
+    static class FirehoseThreadFactory implements ThreadFactory {
+        /** Static threadsafe counter use to generate thread name suffix. */
+        private static final AtomicLong count = new AtomicLong(0);
+
+        @Override
+        public Thread newThread(@Nonnull final Runnable runnable) {
+            Thread thread = Executors.defaultThreadFactory().newThread(runnable);
+            thread.setName("kda-writer-thread-" + count.getAndIncrement());
+            thread.setDaemon(false);
+            return thread;
         }
     }
 }
