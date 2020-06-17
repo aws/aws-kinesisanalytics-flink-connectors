@@ -56,8 +56,8 @@ public final class TestUtils {
             ByteBuffer.wrap(element.getBytes(StandardCharsets.UTF_8)).array();
     }
 
-    public static Context getContext() {
-        return new Context() {
+    public static Context<String> getContext() {
+        return new Context<String>() {
             @Override
             public long currentProcessingTime() {
                 return System.currentTimeMillis();

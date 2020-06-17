@@ -20,10 +20,10 @@ package com.amazonaws.services.kinesisanalytics.flink.connectors.producer;
 
 import com.amazonaws.services.kinesisanalytics.flink.connectors.exception.FlinkKinesisFirehoseException;
 import com.amazonaws.services.kinesisanalytics.flink.connectors.exception.RecordCouldNotBeBuffered;
+import com.amazonaws.services.kinesisanalytics.flink.connectors.exception.RecordCouldNotBeSentException;
 import com.amazonaws.services.kinesisanalytics.flink.connectors.serialization.KinesisFirehoseSerializationSchema;
 import com.amazonaws.services.kinesisfirehose.AmazonKinesisFirehose;
 import com.amazonaws.services.kinesisfirehose.model.Record;
-import com.google.common.util.concurrent.SettableFuture;
 import org.apache.flink.api.common.serialization.SerializationSchema;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.runtime.state.FunctionSnapshotContext;
@@ -35,7 +35,9 @@ import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
 
+import javax.annotation.Nonnull;
 import java.util.Properties;
+import java.util.concurrent.CompletableFuture;
 
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants.CredentialProviderType;
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.producer.impl.FirehoseProducer.UserRecordResult;
@@ -46,25 +48,26 @@ import static com.amazonaws.services.kinesisanalytics.flink.connectors.testutils
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.testutils.TestUtils.getSerializationSchema;
 import static com.amazonaws.services.kinesisanalytics.flink.connectors.testutils.TestUtils.getStandardProperties;
 import static org.apache.flink.streaming.api.functions.sink.SinkFunction.Context;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertNotNull;
-import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.fail;
 
 public class FlinkKinesisFirehoseProducerTest {
     private static final Logger LOGGER = LoggerFactory.getLogger(FlinkKinesisFirehoseProducerTest.class);
 
     private FlinkKinesisFirehoseProducer<String> flinkKinesisFirehoseProducer;
-    private Context context;
-    private Configuration properties = new Configuration();
+    private Context<String> context;
+    private final Configuration properties = new Configuration();
 
     @Mock
     private AmazonKinesisFirehose kinesisFirehoseClient;
@@ -76,8 +79,10 @@ public class FlinkKinesisFirehoseProducerTest {
     public void init() {
         MockitoAnnotations.initMocks(this);
 
-        flinkKinesisFirehoseProducer = spy(new FlinkKinesisFirehoseProducer<>(DEFAULT_DELIVERY_STREAM,
-                getKinesisFirehoseSerializationSchema(), getStandardProperties(), kinesisFirehoseClient, firehoseProducer));
+        flinkKinesisFirehoseProducer = createProducer();
+        doReturn(firehoseProducer).when(flinkKinesisFirehoseProducer).createFirehoseProducer();
+        doReturn(kinesisFirehoseClient).when(flinkKinesisFirehoseProducer).createKinesisFirehoseClient();
+
         context = getContext();
     }
 
@@ -100,29 +105,29 @@ public class FlinkKinesisFirehoseProducerTest {
 
     @Test(dataProvider = "kinesisFirehoseSerializationProvider")
     public void testFlinkKinesisFirehoseProducerHappyCase(final String deliveryStream,
-                                                          final KinesisFirehoseSerializationSchema schema,
+                                                          final KinesisFirehoseSerializationSchema<String> schema,
                                                           final Properties configProps,
                                                           final CredentialProviderType credentialType) {
         FlinkKinesisFirehoseProducer<String> firehoseProducer = (credentialType != null) ?
-                new FlinkKinesisFirehoseProducer<String>(deliveryStream, schema, configProps, credentialType) :
-                new FlinkKinesisFirehoseProducer<String>(deliveryStream, schema, configProps);
+                new FlinkKinesisFirehoseProducer<>(deliveryStream, schema, configProps, credentialType) :
+                new FlinkKinesisFirehoseProducer<>(deliveryStream, schema, configProps);
         assertNotNull(firehoseProducer);
     }
 
     @Test(dataProvider = "serializationSchemaProvider")
     public void testFlinkKinesisFirehoseProducerWithSerializationSchemaHappyCase(final String deliveryStream ,
-                                                                                 final SerializationSchema schema,
+                                                                                 final SerializationSchema<String> schema,
                                                                                  final Properties configProps,
                                                                                  CredentialProviderType credentialType) {
         FlinkKinesisFirehoseProducer<String> firehoseProducer = (credentialType != null) ?
-                new FlinkKinesisFirehoseProducer<String>(deliveryStream, schema, configProps, credentialType) :
-                new FlinkKinesisFirehoseProducer<String>(deliveryStream, schema, configProps);
+                new FlinkKinesisFirehoseProducer<>(deliveryStream, schema, configProps, credentialType) :
+                new FlinkKinesisFirehoseProducer<>(deliveryStream, schema, configProps);
+
         assertNotNull(firehoseProducer);
     }
 
     /**
      * This test is responsible for testing rethrow in for an async error closing the sink (producer).
-     * @throws Exception
      */
     @Test
     public void testAsyncErrorRethrownOnClose() throws Exception {
@@ -150,7 +155,6 @@ public class FlinkKinesisFirehoseProducerTest {
 
     /**
      * This test is responsible for testing an async error rethrow during invoke.
-     * @throws Exception
      */
     @Test
     public void testAsyncErrorRethrownOnInvoke() throws Exception {
@@ -178,10 +182,30 @@ public class FlinkKinesisFirehoseProducerTest {
         }
     }
 
+    @Test
+    public void testAsyncErrorRethrownWhenRecordFailedToSend() throws Exception {
+        flinkKinesisFirehoseProducer.setFailOnError(true);
+
+        UserRecordResult recordResult = new UserRecordResult();
+        recordResult.setSuccessful(false);
+        recordResult.setException(new RuntimeException("A bad thing has happened"));
+
+        when(firehoseProducer.addUserRecord(any(Record.class)))
+                .thenReturn(CompletableFuture.completedFuture(recordResult));
+
+        flinkKinesisFirehoseProducer.open(properties);
+        flinkKinesisFirehoseProducer.invoke("Test", context);
+
+        assertThatExceptionOfType(FlinkKinesisFirehoseException.class)
+                .isThrownBy(() -> flinkKinesisFirehoseProducer.close())
+                .withMessageContaining("An exception has been thrown while trying to process a record")
+                .withCauseInstanceOf(RecordCouldNotBeSentException.class)
+                .withStackTraceContaining("A bad thing has happened");
+    }
+
     /**
      * This test is responsible for testing async error, however should not rethrow in case of failures.
      * This is the default scenario for FlinkKinesisFirehoseProducer.
-     * @throws Exception
      */
     @Test
     public void testAsyncErrorNotRethrowOnInvoke() throws Exception {
@@ -276,7 +300,6 @@ public class FlinkKinesisFirehoseProducerTest {
     /**
      * This test is responsible for testing a scenarion when there are exceptions to be thrown closing the sink (producer)
      * This is the default scenario for FlinkKinesisFirehoseProducer.
-     * @throws Exception
      */
     @Test
     public void testAsyncErrorNotRethrownOnClose() throws Exception {
@@ -301,26 +324,30 @@ public class FlinkKinesisFirehoseProducerTest {
     private void exceptionAssert(FlinkKinesisFirehoseException ex) {
         final String expectedErrorMsg = "An exception has been thrown while trying to process a record";
         LOGGER.info(ex.getMessage());
-        assertEquals(ex.getMessage(), expectedErrorMsg);
+        assertThat(ex.getMessage()).isEqualTo(expectedErrorMsg);
 
-        assertTrue((ex.getCause() != null && ex.getCause() instanceof RecordCouldNotBeBuffered));
+        assertThat(ex.getCause()).isInstanceOf(RecordCouldNotBeBuffered.class);
 
         LOGGER.info(ex.getCause().getMessage());
-        assertEquals(ex.getCause().getMessage(), DEFAULT_TEST_ERROR_MSG);
+        assertThat(ex.getCause().getMessage()).isEqualTo(DEFAULT_TEST_ERROR_MSG);
     }
 
-    private SettableFuture getUserRecordResult(final boolean isFailedRecord, final boolean isSuccessful) {
+    @Nonnull
+    private CompletableFuture<UserRecordResult> getUserRecordResult(final boolean isFailedRecord, final boolean isSuccessful) {
         UserRecordResult recordResult = new UserRecordResult().setSuccessful(isSuccessful);
-        SettableFuture errorResult = SettableFuture.create();
 
         if (isFailedRecord) {
-            Throwable ex = new RecordCouldNotBeBuffered(DEFAULT_TEST_ERROR_MSG);
-            recordResult.setException(ex);
-            errorResult.setException(ex);
+            CompletableFuture<UserRecordResult> future = new CompletableFuture<>();
+            future.completeExceptionally(new RecordCouldNotBeBuffered(DEFAULT_TEST_ERROR_MSG));
+            return future;
+        } else {
+            return CompletableFuture.completedFuture(recordResult);
         }
-
-        errorResult.set(recordResult);
-        return errorResult;
     }
 
+    @Nonnull
+    private FlinkKinesisFirehoseProducer<String> createProducer() {
+        return spy(new FlinkKinesisFirehoseProducer<>(DEFAULT_DELIVERY_STREAM,
+                getKinesisFirehoseSerializationSchema(), getStandardProperties()));
+    }
 }
