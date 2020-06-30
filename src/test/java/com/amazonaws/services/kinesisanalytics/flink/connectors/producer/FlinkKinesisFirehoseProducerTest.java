@@ -138,6 +138,7 @@ public class FlinkKinesisFirehoseProducerTest {
 
             flinkKinesisFirehoseProducer.open(properties);
             flinkKinesisFirehoseProducer.invoke("Test", context);
+            Thread.sleep(1000);
             flinkKinesisFirehoseProducer.close();
 
             LOGGER.warn("Should not reach this line");
@@ -166,6 +167,7 @@ public class FlinkKinesisFirehoseProducerTest {
 
             flinkKinesisFirehoseProducer.open(properties);
             flinkKinesisFirehoseProducer.invoke("Test", context);
+            Thread.sleep(1000);
             flinkKinesisFirehoseProducer.invoke("Test2", context);
             LOGGER.warn("Should not reach this line");
             fail();
