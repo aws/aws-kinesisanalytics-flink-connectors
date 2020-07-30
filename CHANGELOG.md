@@ -1,7 +1,9 @@
 # Changelog
 
-## Release 2.0.0-RC1 (June 17, 2020)
-[Milestone v2.0.0-RC1](https://github.com/aws/aws-kinesisanalytics-flink-connectors/milestone/1)
+## Release 2.0.0 (July 30th, 2020)
+### Milestones
+- [Milestone v2.0.0](https://github.com/aws/aws-kinesisanalytics-flink-connectors/milestone/2)
+- [Milestone v2.0.0-RC1](https://github.com/aws/aws-kinesisanalytics-flink-connectors/milestone/1)
 
 ### New Features
 * Adding Assume Role credential provider
