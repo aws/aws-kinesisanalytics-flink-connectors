@@ -36,7 +36,7 @@ This project is compatible with Flink 1.x, there is no guarantee it will support
 
 Connector Version | Flink Version | Release Date
 ----------------- | ------------- | ------------
-2.0.0 | 1.x | TBD
+2.0.0 | 1.x | Jul, 2020
 1.1.0 | 1.x | Dec, 2019
 1.0.1 | 1.x | Dec, 2018
 1.0.0 | 1.x | Dec, 2018
