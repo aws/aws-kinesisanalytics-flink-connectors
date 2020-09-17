@@ -24,7 +24,7 @@
     <artifactId>aws-kinesisanalytics-flink</artifactId>
     <version>2.1.0-SNAPSHOT</version>
     <packaging>jar</packaging>
-    <name>AWS Kinesis Analytics Java Flink Connectors</name>
+    <name>Amazon Kinesis Analytics Java Flink Connectors</name>
     <description>This library contains various Apache Flink connectors to connect to AWS data sources and sinks.</description>
     <url>https://aws.amazon.com/kinesis/data-analytics/</url>
     <developers>

@@ -1,9 +1,9 @@
-# AWS Kinesis Flink Connectors
+# Amazon Kinesis Flink Connectors
 
 This repository contains various Apache Flink connectors to connect to [AWS Kinesis][kinesis] data sources and sinks. 
 
-## Flink Firehose Producer
-The Firehose Producer allows Flink applications to push directly to [Kinesis Firehose][firehose].
+## Amazon Kinesis Data Firehose Producer for Apache Flink
+This Producer allows Flink applications to push directly to [Kinesis Firehose][firehose].
 - [AWS Documentation][firehose-documentation]
 - [Issues][issues]
 
