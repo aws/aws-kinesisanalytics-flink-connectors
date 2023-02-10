@@ -19,7 +19,6 @@
 package com.amazonaws.services.kinesisanalytics.flink.connectors.util;
 
 import com.amazonaws.client.builder.AwsClientBuilder;
-import com.amazonaws.regions.Regions;
 import com.amazonaws.services.kinesisanalytics.flink.connectors.config.AWSConfigConstants;
 import com.amazonaws.services.kinesisanalytics.flink.connectors.provider.credential.CredentialProvider;
 import com.amazonaws.services.kinesisfirehose.AmazonKinesisFirehose;
@@ -66,7 +65,7 @@ public final class AWSUtil {
         final String firehoseEndpointSigningRegion = configProps.getProperty(
             AWS_KINESIS_FIREHOSE_ENDPOINT_SIGNING_REGION, null);
 
-        firehoseClientBuilder = (region != null) ? firehoseClientBuilder.withRegion(Regions.fromName(region))
+        firehoseClientBuilder = (region != null) ? firehoseClientBuilder.withRegion(region)
             : firehoseClientBuilder.withEndpointConfiguration(
             new AwsClientBuilder.EndpointConfiguration(firehoseEndpoint, firehoseEndpointSigningRegion));
 
