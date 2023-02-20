@@ -1,5 +1,9 @@
 # Changelog
 
+## Release 2.1.0 (February 20th, 2023)
+* Fix issue when region enum values are not available for new regions when AWS SDK is not updated
+  ([PR#22](https://github.com/aws/aws-kinesisanalytics-flink-connectors/pull/22))
+
 ## Release 2.0.0 (July 30th, 2020)
 ### Milestones
 - [Milestone v2.0.0](https://github.com/aws/aws-kinesisanalytics-flink-connectors/milestone/2)
