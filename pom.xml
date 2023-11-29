@@ -63,7 +63,7 @@
         <assertj.version>3.16.1</assertj.version>
         <mockito.version>3.3.3</mockito.version>
         <jacoco.version>0.8.5</jacoco.version>
-        <logback.version>1.2.3</logback.version>
+        <logback.version>1.3.12</logback.version>
         <maven-shade-plugin.version>3.2.4</maven-shade-plugin.version>
         <artifactrepo.url>https://mvnrepository.com/artifact/com.amazonaws/aws-kinesisanalytics-flink</artifactrepo.url>
     </properties>
